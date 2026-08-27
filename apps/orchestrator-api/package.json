@@ -1,0 +1,14 @@
+{
+  "name": "@smartmapper/orchestrator-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@smartmapper/contracts": "workspace:*",
+    "@smartmapper/observability": "workspace:*"
+  }
+}

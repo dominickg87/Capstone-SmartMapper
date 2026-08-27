@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "expectedState": "ready_for_review",
+  "minimumExecutedActions": 6,
+  "prohibitedActionsExecuted": 0,
+  "finalSubmitClicked": false
+}

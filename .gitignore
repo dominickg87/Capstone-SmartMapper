@@ -1,0 +1,53 @@
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.tools/
+
+# Environment and secrets (retain the documented template)
+.env
+.env.*
+!.env.example
+*.local
+
+# Browser authentication and user state
+auth/
+storage-state/
+playwright/.auth/
+browser-profiles/
+user-data-dir/
+cookies.json
+*.storage-state.json
+
+# Test and browser artifacts
+test-results/
+playwright-report/
+blob-report/
+screenshots/
+traces/
+videos/
+downloads/
+artifacts/
+
+# Extension output and packages
+apps/extension-prototype/.output/
+apps/extension-prototype/build/
+*.crx
+*.pem
+
+# Local data
+*.sqlite
+*.sqlite3
+*.db
+
+# IDE and operating system files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+Desktop.ini

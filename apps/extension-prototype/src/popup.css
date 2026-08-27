@@ -1,0 +1,49 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #14213d;
+  background: #f4f7fb;
+}
+
+body {
+  margin: 0;
+}
+
+.panel {
+  display: grid;
+  width: 360px;
+  gap: 14px;
+  padding: 18px;
+}
+
+.warning,
+.status,
+.review {
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.warning {
+  background: #fff3cd;
+}
+
+.status {
+  background: #e8f4f8;
+}
+
+.review {
+  background: #fff0f0;
+}
+
+select,
+button {
+  min-height: 38px;
+  border: 1px solid #789;
+  border-radius: 6px;
+  padding: 7px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

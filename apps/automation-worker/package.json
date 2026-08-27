@@ -1,0 +1,24 @@
+{
+  "name": "@smartmapper/automation-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@smartmapper/automation-core": "workspace:*",
+    "@smartmapper/carrier-adapters": "workspace:*",
+    "@smartmapper/contracts": "workspace:*",
+    "@smartmapper/mia-client": "workspace:*",
+    "@smartmapper/observability": "workspace:*",
+    "playwright": "^1.62.1"
+  }
+}

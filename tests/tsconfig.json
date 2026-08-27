@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "..",
+    "noEmit": true,
+    "tsBuildInfoFile": "../test-results/e2e.tsbuildinfo"
+  },
+  "include": ["e2e/**/*.ts"],
+  "references": [{ "path": "../apps/automation-worker" }, { "path": "../packages/mia-client" }]
+}

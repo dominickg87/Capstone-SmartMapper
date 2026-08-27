@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitReturns": true,
+    "useUnknownInCatchVariables": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@smartmapper/contracts": ["packages/contracts/src/index.ts"],
+      "@smartmapper/automation-core": ["packages/automation-core/src/index.ts"],
+      "@smartmapper/carrier-adapters": ["packages/carrier-adapters/src/index.ts"],
+      "@smartmapper/mia-client": ["packages/mia-client/src/index.ts"],
+      "@smartmapper/ai-mapper": ["packages/ai-mapper/src/index.ts"],
+      "@smartmapper/observability": ["packages/observability/src/index.ts"],
+      "@smartmapper/automation-worker": ["apps/automation-worker/src/index.ts"]
+    }
+  }
+}

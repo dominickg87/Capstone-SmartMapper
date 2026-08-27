@@ -1,0 +1,25 @@
+name: Feature
+description: Propose a scoped SmartMapper capability.
+title: 'feat: '
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the user outcome without including client or credential data.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and review boundaries
+      description: Identify required review, stop points, provenance, and validation.
+    validations:
+      required: true
+  - type: checkboxes
+    id: data
+    attributes:
+      label: Data handling
+      options:
+        - label: This issue contains no secrets, real PII, cookies, screenshots with PII, or private credentials.
+          required: true
