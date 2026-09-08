@@ -2,13 +2,31 @@
 
 Dependencies marked Dom block real integration but not generic mock/core work.
 
+## Starting point and next work
+
+The MIA Chrome extension in `apps/mia-chrome-extension` is the only extension and the development
+base. It already provides sign-in/token handoff, quote selection, page reading, backend mapping,
+staged filling, and reusable mapping templates. Its synthetic browser regression is the baseline.
+
+1. Every teammate builds/loads this extension and follows its setup guide. Dom/API owner confirms
+   the approved demo URL, account permissions, synthetic saved quotes, and deployed mapping routes.
+2. Workstream A documents the existing side-panel/background/API messages and pins read/fill to the
+   intended tab and job; reuse the current sign-in and quote flow.
+3. Workstreams A/B route mappings through shared schema/policy validation and semantic source paths,
+   then add provenance, normalized read-back, high-risk/legal stops, and resumable review state.
+4. Workstream C verifies the demo API contract and tenant/token behavior; backend provider and
+   data-handling details remain external dependencies. Keep the remote feasibility work secondary.
+
+All extension features belong in the MIA app. The milestones below describe how to harden and extend
+that existing workflow; they do not call for another extension scaffold.
+
 ## Milestone 0 — repository safety and team start
 
 Critical path:
 
 - Dom: transfer repository to M.I.A. organization and make it private.
 - Dom: provide approved student usernames, permissions, CODEOWNERS, and branch-protection owner.
-- Team: validate bootstrap on all three development machines and fix reproducibility issues.
+- Team: build/load the MIA extension on all three development machines and run the synthetic checks.
 - Team: review PROJECT_SCOPE.md, DOM_NOTES.md, SECURITY.md, and ADRs.
 - Dom/university: confirm dates, IP/NDA, presentation, and portfolio rules.
 - Team: run a threat-model workshop and assign risk owners.
@@ -21,7 +39,7 @@ Critical path:
 
 - Dom: choose initial line/state and two priority approved carriers or confirm mock-only milestone.
 - Workstream B: refine normalized field dictionary and supported-field matrix from approved inputs.
-- Workstream A: map existing extension integration boundary without copying unrelated code.
+- Workstream A: document the cloned MIA extension's integration boundary and shared-core wiring plan.
 - Workstream C: document API/auth/tenant boundary and submit Azure/access requests.
 - Team: approve synthetic acceptance fixture set and baseline measurement method.
 
@@ -33,7 +51,7 @@ Early risk spikes:
 
 ## Milestone 2 — Week 3–4 technical spikes and decision gate
 
-- Workstream A: active-tab end-to-end spike with persisted pause/resume.
+- Workstream A: add durable tab/job state and pause/resume to the MIA active-tab workflow.
 - Workstream B: first adapter and dynamic-row spike in mock lab.
 - Workstream C: remote login/MFA/session/handoff/cost/isolation spike.
 - Team: score every remote decision-matrix criterion with evidence.
@@ -44,7 +62,7 @@ Azure subscription/region/budget, and exact decision owner.
 
 ## Milestone 3 — primary local workflow
 
-- Complete workflow state persistence and stale-page recovery.
+- Connect the MIA extension to shared policy, workflow state persistence, and stale-page recovery.
 - Implement first approved/mock adapter end to end.
 - Add repeated drivers/vehicles, transformations, conditionals, and validation.
 - Implement review UI with provenance and read-back status.
@@ -61,7 +79,7 @@ Azure subscription/region/budget, and exact decision owner.
 
 - Approve AI provider/data processing or retain deterministic mock.
 - Add provider SDK only behind AiMapperProvider with schema and injection tests.
-- Integrate approved development M.I.A. API with short-lived auth.
+- Harden the established demo M.I.A. API integration and shared provider boundary with short-lived auth.
 - Implement chosen remote proof of concept after the decision gate.
 - Run resilience, cost, privacy, and artifact-retention validation.
 
@@ -82,9 +100,9 @@ Azure subscription/region/budget, and exact decision owner.
 
 ## First-week assignments
 
-| Owner                    | Tasks                                                                                                                       | Evidence by end of week        |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| Student A / Workstream A | Build/load extension, test state across popup close/reload, draft existing-extension questions, add accessibility test plan | Demo and issue list            |
-| Student B / Workstream B | Review contracts/adapters, expand synthetic field matrix, test changed layouts/repeated rows, calculate baseline metrics    | Contract PR and metric sheet   |
-| Student C / Workstream C | Run API/worker, diagram isolation and handoff, compare queue/host candidates, draft remote spike protocol and cost inputs   | Spike plan and architecture PR |
-| Shared                   | Threat model, Dom worksheet review, CI on each machine, weekly demo, risk owner assignment                                  | Signed notes with no secrets   |
+| Owner                    | Tasks                                                                                                                     | Evidence by end of week        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| Student A / Workstream A | Build/load MIA extension, run sign-in/quote/fill regression, document side-panel reload/state gaps and core integration   | Demo and issue list            |
+| Student B / Workstream B | Review contracts/adapters, expand synthetic field matrix, test changed layouts/repeated rows, calculate baseline metrics  | Contract PR and metric sheet   |
+| Student C / Workstream C | Run API/worker, diagram isolation and handoff, compare queue/host candidates, draft remote spike protocol and cost inputs | Spike plan and architecture PR |
+| Shared                   | Threat model, Dom worksheet review, CI on each machine, weekly demo, risk owner assignment                                | Signed notes with no secrets   |

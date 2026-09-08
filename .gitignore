@@ -31,8 +31,7 @@ downloads/
 artifacts/
 
 # Extension output and packages
-apps/extension-prototype/.output/
-apps/extension-prototype/build/
+apps/mia-chrome-extension/.output/
 *.crx
 *.pem
 

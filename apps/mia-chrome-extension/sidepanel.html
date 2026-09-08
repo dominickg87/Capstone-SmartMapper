@@ -1,0 +1,1496 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MIA Quick Tools</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="icons/favicon-32x32.png" />
+    <style>
+      :root {
+        color-scheme: only light;
+        --mia-navy: #00026a;
+        --mia-blue: #098cd6;
+        --mia-pink: #fe2470;
+        --mia-light: #f7f8ff;
+        --mia-border: rgba(0, 2, 106, 0.12);
+        --mia-muted: #6b6f84;
+        font-family:
+          'Segoe UI',
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Helvetica Neue',
+          sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        padding: 16px;
+        /* Match MIA_web_app background gradiation */
+        background-color: #ffffff;
+        background-image:
+          radial-gradient(circle at 85% 39%, #e0aef9 6%, #0000 62%),
+          radial-gradient(circle at 50% 66%, #e2def7 6%, #0000 62%),
+          radial-gradient(circle at 9% 12%, #c8c9f4 6%, #0000 62%),
+          radial-gradient(circle at 16% 45%, #1845e7 6%, #0000 62%),
+          radial-gradient(circle at 88% 83%, #1845e7 6%, #0000 62%),
+          radial-gradient(circle at 97% 95%, #ee42fa 6%, #0000 62%);
+        background-repeat: no-repeat;
+        background-attachment: fixed;
+        background-size: cover;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .panel {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .panel__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        /* Glassmorphism to match .card--glass */
+        background: rgba(255, 255, 255, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        outline: 1px solid rgba(0, 2, 106, 0.06);
+        backdrop-filter: blur(10px) saturate(140%);
+        -webkit-backdrop-filter: blur(10px) saturate(140%);
+        border-radius: 16px;
+        padding: 12px 16px;
+        box-shadow:
+          0 1px 2px rgba(0, 2, 106, 0.1),
+          0 20px 40px rgba(0, 2, 106, 0.1);
+      }
+
+      .panel__header img {
+        width: 56px;
+        height: 56px;
+        object-fit: contain;
+      }
+
+      .panel__header h1 {
+        margin: 0;
+        font-size: 20px;
+        color: var(--mia-navy);
+      }
+
+      .panel__header p {
+        margin: 4px 0 0;
+        color: var(--mia-muted);
+        font-size: 13px;
+      }
+
+      .panel__brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+      }
+
+      .panel__intro {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 8px;
+        width: 100%;
+      }
+
+      .panel__intro h1 {
+        margin: 0;
+        font-size: 22px;
+        color: var(--mia-navy);
+      }
+
+      .panel__actions {
+        display: flex;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 0 auto;
+      }
+
+      .icon-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        border: 1px solid var(--mia-border);
+        background: rgba(255, 255, 255, 0.85);
+        color: var(--mia-navy);
+        cursor: pointer;
+        transition:
+          transform 120ms ease,
+          box-shadow 120ms ease;
+      }
+
+      .icon-button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 14px rgba(0, 2, 106, 0.12);
+      }
+
+      .icon-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+
+      .icon-button--muted,
+      .icon-button--muted:hover {
+        opacity: 0.38;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+        filter: grayscale(0.4);
+      }
+
+      .card {
+        background: rgba(255, 255, 255, 0.92);
+        border: 1px solid var(--mia-border);
+        border-radius: 16px;
+        padding: 14px 16px;
+        box-shadow:
+          0 1px 2px rgba(0, 2, 106, 0.08),
+          0 8px 20px rgba(0, 2, 106, 0.06);
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        width: 325px;
+      }
+
+      .card[hidden] {
+        display: none;
+      }
+
+      /* Glassy card */
+      .card--glass {
+        background: rgba(255, 255, 255, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.6);
+        outline: 1px solid rgba(0, 2, 106, 0.06);
+        backdrop-filter: blur(10px) saturate(140%);
+        -webkit-backdrop-filter: blur(10px) saturate(140%);
+        box-shadow:
+          0 1px 2px rgba(0, 2, 106, 0.1),
+          0 20px 40px rgba(0, 2, 106, 0.1);
+      }
+
+      .card--glass .cta {
+        display: flex;
+        justify-content: center;
+      }
+
+      /* Join card specific tweaks */
+      .card--join {
+        width: 325px;
+        align-self: center;
+        text-align: center;
+        align-items: center;
+        margin-top: 0px;
+        padding: 12px 14px;
+      }
+
+      .card--join h2 {
+        margin-bottom: 2px;
+      }
+
+      .card--join p {
+        margin: 0 0 4px;
+      }
+
+      /* Anchor-styled primary button */
+      .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 16px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #6b21ff 0%, #a855f7 100%);
+        color: #ffffff;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+        box-shadow: 0 10px 16px rgba(107, 33, 255, 0.25);
+        transition:
+          transform 120ms ease,
+          box-shadow 120ms ease;
+      }
+      .btn-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 22px rgba(107, 33, 255, 0.3);
+      }
+
+      .card h2 {
+        /* Reduce space to the following label */
+        margin: 0 0 -6px;
+        font-size: 16px;
+        color: var(--mia-navy);
+      }
+
+      .card p {
+        margin: 0;
+        font-size: 13px;
+        line-height: 1.4;
+        color: #1f2340;
+      }
+
+      .address-display {
+        border: 1px dashed rgba(9, 140, 214, 0.35);
+        background: var(--mia-light);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-weight: 600;
+        color: var(--mia-navy);
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+      }
+
+      .button-row {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 14px;
+      }
+      .button-row .primary {
+        width: auto;
+      }
+
+      #smartMapMappingCard .button-row {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: nowrap;
+      }
+
+      button.primary {
+        border-radius: 10px;
+        border: none;
+        background: linear-gradient(135deg, #6b21ff 0%, #a855f7 100%);
+        color: #ffffff;
+        padding: 10px 16px;
+        font-weight: 600;
+        font-size: 13px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        box-shadow: 0 10px 16px rgba(107, 33, 255, 0.25);
+        transition:
+          transform 120ms ease,
+          box-shadow 120ms ease;
+      }
+
+      button.primary:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 14px 22px rgba(107, 33, 255, 0.3);
+      }
+
+      button.primary:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+        box-shadow: none;
+      }
+
+      .tooltip {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .tooltip__content {
+        position: absolute;
+        top: calc(100% + 6px);
+        left: 50%;
+        transform: translateX(-50%) translateY(-4px);
+        background: linear-gradient(135deg, #6b21ff 0%, #a855f7 100%);
+        color: #fff;
+        padding: 6px 10px;
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+        box-shadow: 0 10px 18px rgba(107, 33, 255, 0.25);
+        opacity: 0;
+        pointer-events: none;
+        transition:
+          opacity 120ms ease,
+          transform 120ms ease;
+      }
+
+      .tooltip[data-active='true'] .tooltip__content {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
+      select {
+        appearance: none;
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(0, 2, 106, 0.18);
+        padding: 10px 12px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--mia-navy);
+        background:
+          url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1.5L6 6.5L11 1.5' stroke='%2300026A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+            no-repeat right 12px center / 12px 8px,
+          linear-gradient(180deg, #ffffff 0%, #f8f9ff 100%);
+      }
+
+      select:focus {
+        outline: none;
+        border-color: var(--mia-pink);
+        box-shadow: 0 0 0 3px rgba(238, 66, 250, 0.2);
+      }
+
+      .fieldset {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      #amsNoteSection[hidden],
+      #amsDocumentsSection[hidden] {
+        display: none;
+      }
+
+      /* Dropdown (styled to mirror MIA web app nav) */
+      .dropdown {
+        position: relative;
+        display: inline-block;
+      }
+      .dropdown__trigger {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 38px;
+        padding: 0 12px;
+        border: 1px solid var(--mia-border);
+        border-radius: 10px;
+        background: #ffffff;
+        color: var(--mia-navy);
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgba(0, 2, 106, 0.06);
+      }
+      .dropdown__trigger:hover {
+        background: #fafbff;
+      }
+      .dropdown__chevron {
+        margin-left: 4px;
+        display: inline-flex;
+      }
+      .dropdown__menu {
+        position: absolute;
+        top: calc(100% + 8px);
+        left: 0;
+        min-width: 220px;
+        background: #fff;
+        border: 1px solid var(--mia-border);
+        border-radius: 12px;
+        box-shadow: 0 6px 20px rgba(0, 2, 106, 0.1);
+        padding: 6px;
+        z-index: 1000;
+      }
+      .dropdown__item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 0;
+        background: transparent;
+        border-radius: 8px;
+        color: var(--mia-navy);
+        cursor: pointer;
+      }
+      .dropdown__item:hover {
+        background: #f6f8ff;
+      }
+      .icon {
+        stroke: currentColor;
+        fill: none;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      label {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--mia-muted);
+      }
+
+      .input-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .input-row input {
+        flex: 1;
+        border-radius: 12px;
+        border: 1px solid rgba(0, 2, 106, 0.18);
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+
+      .input-row input:focus {
+        outline: none;
+        border-color: var(--mia-blue);
+        box-shadow: 0 0 0 3px rgba(9, 140, 214, 0.2);
+      }
+
+      .save-button {
+        background: var(--mia-pink);
+        color: #ffffff;
+        border: none;
+        border-radius: 12px;
+        padding: 10px 16px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          transform 120ms ease,
+          box-shadow 120ms ease;
+      }
+
+      .save-button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 8px 16px rgba(254, 36, 112, 0.25);
+      }
+
+      .hint {
+        color: var(--mia-muted);
+        font-size: 12px;
+      }
+
+      footer {
+        margin-top: auto;
+        text-align: center;
+        color: var(--mia-muted);
+        font-size: 11px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        align-items: center;
+      }
+
+      footer img {
+        width: 120px;
+        height: auto;
+        object-fit: contain;
+      }
+
+      a.footer-link {
+        color: var(--mia-blue);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 14px;
+      }
+
+      a.footer-link:hover {
+        text-decoration: underline;
+      }
+
+      dialog#settingsDialog::backdrop {
+        background: rgba(0, 0, 0, 0.75);
+      }
+
+      dialog#settingsDialog {
+        border: 1px solid var(--mia-border);
+        border-radius: 16px;
+        padding: 16px;
+        width: 420px;
+        max-width: calc(100% - 32px);
+        background: #ffffff;
+        box-shadow: 0 12px 32px rgba(0, 2, 106, 0.18);
+      }
+
+      dialog#amsSubscriptionDialog::backdrop {
+        background: rgba(0, 0, 0, 0.48);
+      }
+
+      dialog#amsSubscriptionDialog {
+        border: 1px solid var(--mia-border);
+        border-radius: 16px;
+        padding: 18px;
+        width: 300px;
+        max-width: calc(100% - 32px);
+        background: #ffffff;
+        box-shadow: 0 12px 32px rgba(0, 2, 106, 0.18);
+      }
+
+      .ams-subscription-dialog__body {
+        display: grid;
+        gap: 14px;
+      }
+
+      .ams-subscription-dialog__body h2 {
+        margin: 0;
+        color: var(--mia-navy);
+        font-size: 18px;
+      }
+
+      .ams-subscription-dialog__body p {
+        margin: 0;
+        color: #1f2340;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .settings-actions {
+        display: flex;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 12px;
+      }
+
+      .btn-secondary {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #f4f6ff;
+        color: var(--mia-navy);
+        border: 1px solid var(--mia-border);
+        border-radius: 8px;
+        padding: 10px 14px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .btn-secondary[hidden] {
+        display: none;
+      }
+
+      .btn-secondary:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
+      .smartmap-training-button {
+        align-self: flex-start;
+      }
+
+      .quick-tools-screen,
+      .smartmap-screen {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .smartmap-screen[hidden],
+      .ams-save-screen[hidden],
+      .quick-tools-screen[hidden] {
+        display: none;
+      }
+
+      .ams-save-screen {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        align-items: center;
+      }
+
+      .smartmap-card-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .smartmap-card-row h2 {
+        margin: 0;
+      }
+
+      .smartmap-login-button {
+        flex: 0 0 auto;
+      }
+
+      .signin-pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 28px;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .signin-pill--in {
+        border: 1px solid rgba(34, 197, 94, 0.32);
+        background: #dcfce7;
+        color: #166534;
+      }
+
+      .signin-pill--out {
+        border: 1px solid rgba(239, 68, 68, 0.34);
+        background: #fee2e2;
+        color: #991b1b;
+      }
+
+      .smartmap-input {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(0, 2, 106, 0.18);
+        padding: 10px 12px;
+        font-size: 13px;
+      }
+
+      .smartmap-input:focus {
+        outline: none;
+        border-color: var(--mia-blue);
+        box-shadow: 0 0 0 3px rgba(9, 140, 214, 0.2);
+      }
+
+      .smartmap-results,
+      .selected-quote,
+      .smartmap-summary {
+        border: 1px solid var(--mia-border);
+        border-radius: 12px;
+        background: var(--mia-light);
+        color: #1f2340;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .smartmap-results {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: 220px;
+        overflow: auto;
+      }
+
+      .smartmap-results.is-message {
+        display: block;
+      }
+
+      .quote-result {
+        width: 100%;
+        border: 1px solid rgba(0, 2, 106, 0.12);
+        border-radius: 10px;
+        background: #ffffff;
+        color: #1f2340;
+        cursor: pointer;
+        padding: 8px 10px;
+        text-align: left;
+      }
+
+      .quote-result:hover {
+        border-color: rgba(9, 140, 214, 0.4);
+        background: #f9fbff;
+      }
+
+      .quote-result.selected {
+        border-color: rgba(34, 197, 94, 0.45);
+        background: #f0fdf4;
+        color: #166534;
+      }
+
+      .quote-result strong {
+        display: block;
+        color: var(--mia-navy);
+        font-size: 12px;
+        margin-bottom: 2px;
+      }
+
+      .quote-result span {
+        display: block;
+        color: var(--mia-muted);
+        font-size: 11px;
+      }
+
+      .selected-quote {
+        font-weight: 700;
+        color: var(--mia-navy);
+      }
+
+      .smartmap-count {
+        color: var(--mia-muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .smartmap-map-state {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--mia-border);
+        border-radius: 12px;
+        background: #ffffff;
+        color: var(--mia-navy);
+        padding: 10px 12px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .smartmap-map-state svg {
+        flex: 0 0 auto;
+      }
+
+      .smartmap-map-state--green {
+        border-color: rgba(34, 197, 94, 0.32);
+        background: #f0fdf4;
+        color: #166534;
+      }
+
+      .smartmap-map-state--yellow {
+        border-color: rgba(234, 179, 8, 0.38);
+        background: #fffbeb;
+        color: #92400e;
+      }
+
+      .smartmap-map-state--red {
+        border-color: rgba(239, 68, 68, 0.34);
+        background: #fef2f2;
+        color: #991b1b;
+      }
+
+      .smartmap-fill-summary {
+        border: 1px solid var(--mia-border);
+        border-radius: 12px;
+        background: #ffffff;
+        color: #1f2340;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .smartmap-fill-summary[hidden] {
+        display: none;
+      }
+
+      .ams-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .ams-card-header h2 {
+        margin: 0;
+      }
+
+      .ams-choice-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
+      .ams-checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--mia-navy);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .ams-checkbox input {
+        width: 16px;
+        height: 16px;
+      }
+
+      .ams-note-area {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      .ams-note-area,
+      .ams-title-input {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(0, 2, 106, 0.18);
+        padding: 10px 12px;
+        font-size: 13px;
+        font-family: inherit;
+      }
+
+      .ams-upload-dropzone {
+        display: grid;
+        gap: 6px;
+        border: 1px dashed rgba(9, 140, 214, 0.45);
+        border-radius: 12px;
+        background: rgba(248, 249, 255, 0.92);
+        color: var(--mia-navy);
+        padding: 14px;
+        cursor: pointer;
+        text-align: center;
+      }
+
+      .ams-upload-dropzone.is-dragging {
+        border-color: #16a34a;
+        background: #f0fdf4;
+      }
+
+      .ams-upload-dropzone strong {
+        font-size: 13px;
+      }
+
+      .ams-upload-dropzone span {
+        color: var(--mia-muted);
+        font-size: 12px;
+      }
+
+      .ams-file-input {
+        display: none;
+      }
+
+      .ams-document-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .ams-document-item {
+        display: grid;
+        gap: 8px;
+        border: 1px solid rgba(0, 2, 106, 0.1);
+        border-radius: 12px;
+        background: var(--mia-light);
+        padding: 10px 12px;
+      }
+
+      .ams-document-item__top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .ams-document-item strong {
+        color: var(--mia-navy);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .ams-document-item span {
+        color: var(--mia-muted);
+        font-size: 11px;
+      }
+
+      .ams-send-actions {
+        width: 100%;
+        display: grid;
+        justify-items: center;
+        gap: 10px;
+      }
+
+      .ams-send-actions[hidden] {
+        display: none;
+      }
+
+      .ams-send-button {
+        width: 132px;
+        min-height: 38px;
+        justify-content: center;
+        white-space: nowrap;
+      }
+
+      .ams-send-status {
+        border: 1px solid var(--mia-border);
+        border-radius: 12px;
+        background: #ffffff;
+        color: #1f2340;
+        padding: 10px 12px;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .ams-send-status--success,
+      .ams-send-status__content {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .ams-send-status__icon {
+        flex: 0 0 auto;
+        margin-top: 1px;
+      }
+
+      .ams-send-status[hidden] {
+        display: none;
+      }
+
+      .ams-send-status--success {
+        border-color: rgba(34, 197, 94, 0.32);
+        background: #f0fdf4;
+        color: #166534;
+      }
+
+      .ams-send-status--error {
+        border-color: rgba(239, 68, 68, 0.34);
+        background: #fef2f2;
+        color: #991b1b;
+      }
+
+      .ams-send-status--loading {
+        border-color: rgba(234, 179, 8, 0.38);
+        background: #fffbeb;
+        color: #92400e;
+      }
+    </style>
+    <link rel="stylesheet" href="pdf-merger.css" />
+  </head>
+  <body>
+    <div class="panel">
+      <header class="panel__header">
+        <div class="panel__brand">
+          <img src="icons/apple-touch-icon.png" alt="MIA logo" />
+          <div class="panel__intro">
+            <h1>MIA Quick Tools</h1>
+            <div class="panel__actions">
+              <div class="tooltip" data-tooltip="home">
+                <button id="homeBtn" class="icon-button" type="button" aria-label="Main tools">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"></path>
+                    <path
+                      d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"
+                    ></path>
+                  </svg>
+                </button>
+                <div class="tooltip__content" role="tooltip">Main Tools</div>
+              </div>
+              <div class="tooltip" data-tooltip="settings">
+                <button id="settingsBtn" class="icon-button" aria-label="Portal settings">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                      d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9c.36 0 .71.07 1.04.2.33.13.63.32.9.56H21a2 2 0 1 1 0 4h-.09c-.27.24-.57.43-.9.56-.33.13-.68.2-1.04.2z"
+                    ></path>
+                  </svg>
+                </button>
+                <div class="tooltip__content" role="tooltip">Portal Settings</div>
+              </div>
+              <div class="tooltip" data-tooltip="merge">
+                <button id="mergePdfsBtn" class="icon-button" type="button" aria-label="Merge PDFs">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M10 18H5a3 3 0 0 1-3-3v-1"></path>
+                    <path d="M14 2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2"></path>
+                    <path d="M20 2a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2"></path>
+                    <path d="m7 21 3-3-3-3"></path>
+                    <rect x="14" y="14" width="8" height="8" rx="2"></rect>
+                    <rect x="2" y="2" width="8" height="8" rx="2"></rect>
+                  </svg>
+                </button>
+                <div class="tooltip__content" role="tooltip">Merge PDFs</div>
+              </div>
+              <div class="tooltip" data-tooltip="smartmap">
+                <button id="smartMapBtn" class="icon-button" type="button" aria-label="SmartMap">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path
+                      d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"
+                    ></path>
+                    <path
+                      d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10"
+                    ></path>
+                    <path d="m17 10 4 4-4 4"></path>
+                  </svg>
+                </button>
+                <div class="tooltip__content" role="tooltip">SmartMap</div>
+              </div>
+              <div class="tooltip" data-tooltip="ams-save">
+                <button id="amsSaveBtn" class="icon-button" type="button" aria-label="Save to AMS">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <line x1="22" x2="2" y1="12" y2="12"></line>
+                    <path
+                      d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"
+                    ></path>
+                    <path d="M12 2v8"></path>
+                    <path d="m8 6 4 4 4-4"></path>
+                    <line x1="6" x2="6.01" y1="16" y2="16"></line>
+                    <line x1="10" x2="10.01" y1="16" y2="16"></line>
+                  </svg>
+                </button>
+                <div class="tooltip__content" role="tooltip">Save to AMS</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <dialog id="settingsDialog">
+        <div class="settings-header">
+          <h3 style="margin: 0; color: var(--mia-navy)">Portal Settings</h3>
+          <button
+            id="closeSettingsBtn"
+            class="icon-button"
+            title="Close settings"
+            aria-label="Close settings"
+          >
+            ✕
+          </button>
+        </div>
+        <div class="fieldset">
+          <label for="baseUrlInput">MIA subdomain (e.g., youragency) or full URL</label>
+          <div class="input-row">
+            <input
+              id="baseUrlInput"
+              type="text"
+              placeholder="youragency or https://youragency.mia.agency"
+              autocomplete="off"
+            />
+            <button id="saveBaseUrl" class="save-button">Save</button>
+          </div>
+          <p class="hint">
+            Enter just your subdomain or a full portal URL. We’ll remember your choice.
+          </p>
+        </div>
+      </dialog>
+
+      <dialog id="amsSubscriptionDialog">
+        <div class="ams-subscription-dialog__body">
+          <h2>Integrations unavailable</h2>
+          <p id="amsSubscriptionMessage">
+            Integrations are not available in your mia subscription. Please contact your
+            administrator or log into your billing portal to upgrade your subscription.
+          </p>
+          <button id="amsSubscriptionCloseBtn" class="save-button" type="button">OK</button>
+        </div>
+      </dialog>
+
+      <section id="amsSaveScreen" class="ams-save-screen" hidden>
+        <section class="card">
+          <div class="ams-card-header">
+            <h2>Client Search</h2>
+            <span id="amsSaveConnectionStatus" class="signin-pill signin-pill--out"
+              >Signed out</span
+            >
+            <div class="tooltip" data-tooltip="ams-save-login">
+              <button
+                id="amsSaveSignInBtn"
+                class="icon-button"
+                type="button"
+                aria-label="Sign into MIA"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                  <polyline points="10 17 15 12 10 7"></polyline>
+                  <line x1="15" x2="3" y1="12" y2="12"></line>
+                </svg>
+              </button>
+              <div class="tooltip__content" role="tooltip">Sign into MIA</div>
+            </div>
+          </div>
+          <div class="fieldset">
+            <label for="amsClientSearchInput">Search clients by name</label>
+            <div class="input-row">
+              <input
+                id="amsClientSearchInput"
+                class="smartmap-input"
+                type="search"
+                placeholder="Last Name, First Name"
+                autocomplete="off"
+              />
+              <button id="amsClientSearchBtn" class="save-button" type="button">Search</button>
+            </div>
+          </div>
+          <div id="amsClientResults" class="smartmap-results">
+            Sign into MIA to search AMS clients.
+          </div>
+          <div id="amsSelectedClient" class="selected-quote">No client selected.</div>
+        </section>
+
+        <section id="amsPoliciesCard" class="card" hidden>
+          <h2>Policies</h2>
+          <div id="amsPolicyResults" class="smartmap-results">
+            Select a client to load policies.
+          </div>
+        </section>
+
+        <section id="amsWhatCard" class="card" hidden>
+          <h2>What are we saving?</h2>
+          <div class="ams-choice-row">
+            <label class="ams-checkbox">
+              <input id="amsSaveNoteCheckbox" type="checkbox" />
+              <span>Note</span>
+            </label>
+            <label class="ams-checkbox">
+              <input id="amsSaveDocumentsCheckbox" type="checkbox" />
+              <span>Documents</span>
+            </label>
+          </div>
+          <div id="amsNoteSection" class="fieldset" hidden>
+            <label for="amsNoteTitleInput">Note title</label>
+            <input
+              id="amsNoteTitleInput"
+              class="ams-title-input"
+              type="text"
+              value="AMS Note.txt"
+            />
+            <label for="amsNoteBodyInput">Note</label>
+            <textarea
+              id="amsNoteBodyInput"
+              class="ams-note-area"
+              placeholder="Type the note to save as a .txt file."
+            ></textarea>
+          </div>
+          <div id="amsDocumentsSection" class="fieldset" hidden>
+            <label id="amsUploadDropzone" class="ams-upload-dropzone" for="amsDocumentInput">
+              <strong>Drag files here or click to browse</strong>
+              <span>PDF, Word, Excel, text, image, and email files are supported.</span>
+            </label>
+            <input id="amsDocumentInput" class="ams-file-input" type="file" multiple />
+            <div id="amsDocumentList" class="ams-document-list"></div>
+          </div>
+        </section>
+
+        <section id="amsSendCard" class="ams-send-actions" hidden>
+          <button id="amsSendBtn" class="primary ams-send-button" type="button" disabled>
+            Send to AMS
+          </button>
+          <div id="amsSendStatus" class="ams-send-status" hidden></div>
+        </section>
+      </section>
+
+      <section id="smartMapScreen" class="smartmap-screen" hidden>
+        <span id="smartMapStatus" hidden>Ready to map</span>
+
+        <section class="card">
+          <div class="smartmap-card-row">
+            <h2>SmartMap</h2>
+            <span id="smartMapConnectionStatus" class="signin-pill signin-pill--out"
+              >Signed out</span
+            >
+            <div class="tooltip" data-tooltip="smartmap-login">
+              <button
+                id="smartMapSignInBtn"
+                class="icon-button smartmap-login-button"
+                type="button"
+                aria-label="Sign into MIA"
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+                  <polyline points="10 17 15 12 10 7"></polyline>
+                  <line x1="15" x2="3" y1="12" y2="12"></line>
+                </svg>
+              </button>
+              <div class="tooltip__content" role="tooltip">Sign into MIA</div>
+            </div>
+          </div>
+        </section>
+
+        <section id="smartMapMappingCard" class="card" hidden>
+          <h2>Mapping</h2>
+          <div class="button-row">
+            <button id="smartMapReadPageBtn" class="primary" type="button">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"
+                ></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <span>Read Page</span>
+            </button>
+            <button id="smartMapRunBtn" class="primary" type="button">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M15 2H9a1 1 0 0 0-1 1v2c0 .6.4 1 1 1h6c.6 0 1-.4 1-1V3c0-.6-.4-1-1-1Z"
+                ></path>
+                <path
+                  d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2M16 4h2a2 2 0 0 1 2 2v2M11 14h10"
+                ></path>
+                <path d="m17 10 4 4-4 4"></path>
+              </svg>
+              <span>SmartMap</span>
+            </button>
+          </div>
+          <div id="smartMapPageSummary" class="smartmap-summary">
+            <strong>Current page:</strong> waiting to read carrier fields.
+          </div>
+          <div id="smartMapFieldCount" class="smartmap-count">0 fields detected</div>
+          <div id="smartMapMappingState" class="smartmap-map-state">
+            <span id="smartMapMappingStateIcon"></span>
+            <span id="smartMapMappingStateText">Waiting for page read.</span>
+          </div>
+          <div id="smartMapFillSummary" class="smartmap-fill-summary" hidden></div>
+          <button
+            id="smartMapSaveTrainingBtn"
+            class="btn-secondary smartmap-training-button"
+            type="button"
+            hidden
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path
+                d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8A2 2 0 0 1 21 8.8V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"
+              ></path>
+              <path d="M17 21v-7H7v7"></path>
+              <path d="M7 3v5h8"></path>
+            </svg>
+            <span>Save Training</span>
+          </button>
+        </section>
+
+        <section class="card">
+          <h2>Client / Quote</h2>
+          <div class="fieldset">
+            <label for="smartMapQuoteSearch">Search dashboard quotes</label>
+            <input
+              id="smartMapQuoteSearch"
+              class="smartmap-input"
+              type="search"
+              placeholder="Client name, quote number, or LOB"
+              autocomplete="off"
+            />
+          </div>
+          <div id="smartMapQuoteResults" class="smartmap-results">
+            Sign into MIA to search quotes.
+          </div>
+          <div id="smartMapSelectedQuote" class="selected-quote">No quote selected.</div>
+        </section>
+      </section>
+
+      <div id="quickToolsScreen" class="quick-tools-screen">
+        <section class="card">
+          <h2>Selected Address</h2>
+          <p id="addressDisplay" class="address-display">
+            Click the pink pin in AMS360 or NowCerts to load the address.
+          </p>
+          <div class="button-row">
+            <button id="zillowBtn" class="primary" disabled>Zillow Listing</button>
+            <button id="googleBtn" class="primary" disabled>Google Address Search</button>
+            <button id="taxBtn" class="primary" disabled>Tax Assessor Search</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Personal Lines Quotes</h2>
+          <div class="fieldset">
+            <label for="personalTrigger">Select a quote sheet to start working on</label>
+            <div class="dropdown">
+              <button
+                id="personalTrigger"
+                type="button"
+                class="dropdown__trigger"
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                  <circle cx="12" cy="8" r="5"></circle>
+                  <path d="M20 21a8 8 0 0 0-16 0"></path>
+                </svg>
+                <span>Personal</span>
+                <span class="dropdown__chevron" aria-hidden>
+                  <svg class="icon" width="12" height="12" viewBox="0 0 24 24">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
+              </button>
+              <div id="personalMenu" class="dropdown__menu" role="menu" hidden></div>
+            </div>
+            <select id="personalSelect" style="display: none">
+              <option value="">Select a form…</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Commercial Lines Quotes</h2>
+          <div class="fieldset">
+            <label for="commercialTrigger">Select a quote sheet to start working on</label>
+            <div class="dropdown">
+              <button
+                id="commercialTrigger"
+                type="button"
+                class="dropdown__trigger"
+                aria-haspopup="menu"
+                aria-expanded="false"
+              >
+                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+                  <path d="M12 12h.01"></path>
+                  <path d="M16 6V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"></path>
+                  <path d="M22 13a18.15 18.15 0 0 1-20 0"></path>
+                  <rect width="20" height="14" x="2" y="6" rx="2"></rect>
+                </svg>
+                <span>Commercial</span>
+                <span class="dropdown__chevron" aria-hidden>
+                  <svg class="icon" width="12" height="12" viewBox="0 0 24 24">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
+              </button>
+              <div id="commercialMenu" class="dropdown__menu" role="menu" hidden></div>
+            </div>
+            <select id="commercialSelect" style="display: none">
+              <option value="">Select a form…</option>
+            </select>
+          </div>
+        </section>
+
+        <section class="card card--glass card--join">
+          <h2>Join the fun!</h2>
+          <p>We have plans to fit your agency's needs and budget.</p>
+          <div class="cta">
+            <a
+              class="btn-primary"
+              href="https://mia.agency/plans"
+              target="_blank"
+              rel="noopener noreferrer"
+              >Sign Up</a
+            >
+          </div>
+        </section>
+
+        <section class="card" id="legacyPortalSettings" style="display: none">
+          <h2>Portal Settings</h2>
+          <div class="fieldset">
+            <label for="baseUrlInputLegacy">MIA portal URL (include https://)</label>
+            <div class="input-row">
+              <input
+                id="baseUrlInputLegacy"
+                type="url"
+                placeholder="https://youragency.mia.agency"
+                autocomplete="off"
+              />
+              <button id="saveBaseUrlLegacy" class="save-button">Save</button>
+            </div>
+            <p class="hint">
+              We’ll use this as the starting point for every quote link. Update it if your team uses
+              a different subdomain.
+            </p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <footer style="color: #000">
+      <a
+        class="footer-link"
+        href="https://mia.agency"
+        target="_blank"
+        rel="noopener noreferrer"
+        style="color: #000; font-weight: bold"
+        >mia.agency</a
+      >
+      <span style="margin-left: 4px">&copy; 2024 My Insurance Assistant</span>
+      <span id="extensionVersion" style="font-size: 10px; color: #4b5563">Version</span>
+    </footer>
+
+    <script src="pdf-lib.min.js"></script>
+    <script src="pdf-merger.js"></script>
+    <script type="module" src="src/sidepanel.js"></script>
+  </body>
+</html>

@@ -1,0 +1,2 @@
+# Preserve the imported third-party distribution and its license header.
+apps/mia-chrome-extension/pdf-lib.min.js

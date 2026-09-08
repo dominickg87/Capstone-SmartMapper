@@ -10,6 +10,11 @@ into an assumption.
 
 ## Architectural invariants
 
+- Use apps/mia-chrome-extension as the only Chrome extension and the basis for all extension work.
+  Reuse its MIA authentication, quote-selection, and side-panel flow; do not create a replacement app.
+- Integrate its inherited mapping/filling code with the shared contracts and core. The inherited
+  implementation does not yet meet all invariants below; record gaps explicitly and do not treat
+  existing behavior as permission to bypass schema, policy, provenance, read-back, or review work.
 - Keep one shared automation core with ExtensionExecutor and RemoteBrowserExecutor adapters.
 - Keep carrier adapters independent from execution environments.
 - Keep provider-specific AI code behind AiMapperProvider.
@@ -41,17 +46,20 @@ into an assumption.
 Applications live under apps, reusable runtime packages under packages, synthetic data under
 fixtures, E2E tests under tests/e2e, and cross-cutting decisions under docs/adr. Do not create another
 automation core in an app. Do not make an adapter depend on Chrome or Playwright.
+The mock sites, in-memory API, and remote worker are supporting applications. The in-memory API
+does not implement the MIA extension's live quote/mapping routes.
 
 ## Commands
 
 - pnpm build — build every package and application.
+- pnpm build:extension — build apps/mia-chrome-extension/dist for Chrome Load unpacked.
 - pnpm lint — run repository ESLint rules.
 - pnpm format:check — verify Prettier formatting.
 - pnpm typecheck — run strict TypeScript project references.
 - pnpm test — run unit and contract tests.
 - pnpm test:e2e — run localhost mock-carrier browser tests.
 - pnpm dev:mock-carriers — serve the synthetic carrier lab.
-- pnpm dev:extension — run the extension development build.
+- pnpm dev:extension — build/watch the MIA extension; reload it manually in Chrome after rebuilds.
 - pnpm dev:api — run the in-memory API.
 - pnpm dev:worker -- --flow=modern — run the worker against an already-running mock site.
 

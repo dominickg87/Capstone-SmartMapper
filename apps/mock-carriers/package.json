@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "build": "tsc -b && vite build",
-    "dev": "vite"
+    "dev": "vite --host 127.0.0.1 --port 4173 --strictPort"
   }
 }

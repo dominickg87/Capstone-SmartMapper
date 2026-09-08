@@ -19,7 +19,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'pnpm dev:mock-carriers --host 127.0.0.1 --port 4173',
+    command: 'pnpm dev:mock-carriers',
     url: 'http://127.0.0.1:4173/health',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

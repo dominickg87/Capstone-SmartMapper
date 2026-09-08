@@ -18,6 +18,16 @@ architecture and operational readiness. Security/compliance reviewers approve da
 carrier-use boundaries. This document is versioned with code; a scope change is not complete until its
 impact, owner, acceptance criteria, and schedule are recorded.
 
+## 2026-09-07 implementation update
+
+The user selected the MIA extension from branch `ChromeExtSave2AMS` as the basis for the capstone.
+`apps/mia-chrome-extension` is the only Chrome extension, with SmartMap enabled; the earlier standalone
+extension has been removed. All extension development builds on the MIA code and integrates the
+shared-core safety and data contracts described below. Those contracts are requirements, not claims
+about the current inherited filler. See [ADR 0005](docs/adr/0005-import-mia-extension.md) and the
+[application guide](apps/mia-chrome-extension/README.md). Demo backend availability, live carrier
+authorization, repository privacy, and production-data decisions remain unverified or pending.
+
 ## 2. Executive summary
 
 SmartMapper reduces repeated manual entry during insurance quote intake. It retrieves an approved,
@@ -29,7 +39,8 @@ purchase, signature, attestation, consumer-report authorization, or other legal 
 The capstone builds one shared core and two execution adapters. Local active-tab mode runs through the
 M.I.A. Chrome extension in the user's authenticated carrier tab and is the primary delivery path.
 Remote-browser mode runs a queued job in an isolated browser and is a feasibility proof of concept
-subject to a Week 4 decision gate. The bootstrap uses synthetic data and local mock carriers only.
+subject to a Week 4 decision gate. Automated tests use synthetic responses and local mock forms.
+The MIA extension connects to the configured MIA portal; demo backend readiness remains unverified.
 
 ## 3. Problem statement
 
@@ -103,7 +114,7 @@ resumable job, and explicit human review.
 ## 7. Recommended delivery strategy
 
 Local mode is the capstone's primary path because it reuses the user's authenticated session, keeps
-actions visible, simplifies human intervention, and can integrate with the existing extension.
+actions visible, simplifies human intervention, and builds directly on `apps/mia-chrome-extension`.
 Remote mode is an early spike and secondary proof of concept, not a parallel product.
 
 By the end of Week 4 the team will recommend proceed, constrain, redesign, or defer for remote mode.
@@ -118,7 +129,7 @@ findings remain deliverables while effort returns to local accuracy and resilien
 - Two approved carrier workflows, or two materially different mock carriers until access is approved.
 - A strict normalized quote contract with versioning and field provenance.
 - A versioned carrier adapter framework and maintenance workflow.
-- A Manifest V3 local extension prototype.
+- SmartMapper functionality developed within the cloned MIA Manifest V3 extension.
 - A remote browser worker proof of concept behind the shared Executor interface.
 - Resumable jobs with start, pause, resume, cancel, expiration, failure, and review states.
 - Deterministic mapping, semantic fallback, controlled AI mapping interface, and mock provider.
@@ -340,22 +351,22 @@ explicitly unsupported fields but not silently skipped required fields.
 
 ## 22. Four-month / 16-week plan
 
-| Weeks | Deliverables and exit evidence                                                                                                                               |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1–2   | Private repository/access decisions, charter, security baseline, normalized contract, two mock flows, access requests, baseline metrics, student assignments |
-| 3–4   | Local and remote technical spikes, authentication/session/handoff feasibility, executor interface, cost/compatibility evidence, Week 4 decision gate         |
-| 5–7   | Shared core, extension workflow, first approved/mock adapter end to end, provenance/read-back/audit                                                          |
-| 8–10  | Second adapter, dynamic lists, conditionals, validation, review UX, pause/resume recovery                                                                    |
-| 11–12 | AI-assisted fallback behind interface, changed-page detection, regression suite, audit/redaction hardening                                                   |
-| 13–14 | Approved M.I.A. development integration, notifications, chosen remote proof of concept, resilience testing                                                   |
-| 15    | Security review, UAT, accuracy/performance/cost measurements, prioritized fixes                                                                              |
-| 16    | Demonstration, documentation, deployment/handoff plan, known limitations and unresolved-risk report                                                          |
+| Weeks | Deliverables and exit evidence                                                                                                                             |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1–2   | Private repository/access decisions, MIA extension setup, demo API readiness, security baseline, normalized contract, synthetic tests, student assignments |
+| 3–4   | Local and remote technical spikes, authentication/session/handoff feasibility, executor interface, cost/compatibility evidence, Week 4 decision gate       |
+| 5–7   | Integrate shared core into the MIA extension, first approved/mock adapter end to end, provenance/read-back/audit                                           |
+| 8–10  | Second adapter, dynamic lists, conditionals, validation, review UX, pause/resume recovery                                                                  |
+| 11–12 | AI-assisted fallback behind interface, changed-page detection, regression suite, audit/redaction hardening                                                 |
+| 13–14 | M.I.A. integration hardening, notifications, chosen remote proof of concept, resilience testing                                                            |
+| 15    | Security review, UAT, accuracy/performance/cost measurements, prioritized fixes                                                                            |
+| 16    | Demonstration, documentation, deployment/handoff plan, known limitations and unresolved-risk report                                                        |
 
 Each week ends with a working demo, metric/risk update, decisions needed from Dom, and reviewed backlog.
 
 ## 23. Three-engineer workstream proposal
 
-- Workstream A: extension/local executor, tab/page recovery, progress and user review experience.
+- Workstream A: MIA extension/local executor integration, tab/page recovery, progress and user review.
 - Workstream B: automation core, carrier adapters, mock sites, transformations, accuracy/regression.
 - Workstream C: orchestrator, remote worker, queue/session/handoff abstractions, observability/cost spike.
 
@@ -398,8 +409,9 @@ Probability/impact are initial qualitative estimates and must be reviewed in Wee
 
 ## 26. Decision log and open questions
 
-Accepted bootstrap decisions:
+Accepted implementation decisions:
 
+- The cloned MIA Chrome extension is the only extension and the basis for all extension development.
 - One shared core with extension and remote executor interfaces.
 - Local mode is primary; remote is a Week 4 gated feasibility proof.
 - Human review precedes submission and high-risk/uncertain decisions.

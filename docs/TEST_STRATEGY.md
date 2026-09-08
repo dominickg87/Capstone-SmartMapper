@@ -5,7 +5,20 @@
 Unit tests cover schemas, action policy, confidence gates, transitions, source paths, transforms,
 normalization/read-back, redaction, provider errors, adapter recognition, and API repositories.
 Integration tests connect synthetic provider, core, adapter, and executor boundaries. Playwright E2E
-tests exercise two mock sites in isolated contexts.
+tests load the MIA extension with synthetic API responses and exercise the supporting worker against
+two mock sites in isolated contexts.
+
+## Current extension coverage
+
+`tests/e2e/mia-extension.e2e.spec.ts` loads the built MIA extension and checks that SmartMap is enabled,
+its connection page hands off a synthetic token, quote search/selection works, a mapped field is
+filled, low-confidence data is skipped, and mapping templates can be saved. It also checks mapper
+failure, expired sign-in cleanup, and that the synthetic final-submit control is never clicked.
+External DNS is disabled and responses come from test routing; the local form permission is added
+only to the disposable test copy of the manifest.
+
+The worker's tests exercise the shared core separately. Their provenance, read-back, and recovery
+coverage must also be added at the MIA extension boundary as that integration is implemented.
 
 ## Required behavior paths
 
@@ -40,7 +53,9 @@ specific approved task. Do not turn a browser test toward a live domain by chang
 
 ## Commands and CI
 
-pnpm test runs unit/contract tests. pnpm test:e2e starts the mock site and Chromium tests.
+pnpm test runs unit/contract tests. Build first with pnpm build; pnpm test:e2e then starts the mock site
+and runs the MIA extension and worker regressions. The browser CI job builds the extension and shared packages before
+running these tests. The extension's development watcher also has a rebuild/recovery regression.
 pnpm format:check, pnpm lint, pnpm typecheck, and pnpm build are independent required checks. CI uses a
 locked install and no live credentials/traffic. Failure artifacts have three-day retention and must
 remain synthetic.

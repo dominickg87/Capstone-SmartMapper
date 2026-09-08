@@ -1,0 +1,59 @@
+{
+  "manifest_version": 3,
+  "name": "MIA SmartMapper (Capstone)",
+  "version": "1.4.21",
+  "permissions": ["activeTab", "scripting", "tabs", "sidePanel", "storage"],
+  "host_permissions": [
+    "https://mia.agency/*",
+    "https://*.mia.agency/*",
+    "https://mia.test/*",
+    "https://*.mia.test/*",
+    "https://www.ams360.com/*",
+    "https://nowcerts.com/*",
+    "https://*.nowcerts.com/*",
+    "https://nominatim.openstreetmap.org/*"
+  ],
+  "optional_host_permissions": ["https://*/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open MIA Side Panel",
+    "default_icon": {
+      "16": "icons/favicon-16x16.png",
+      "32": "icons/favicon-32x32.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.ams360.com/*", "https://nowcerts.com/*", "https://*.nowcerts.com/*"],
+      "js": ["src/content.js"]
+    },
+    {
+      "matches": [
+        "https://mia.agency/*",
+        "https://*.mia.agency/*",
+        "https://mia.test/*",
+        "https://*.mia.test/*"
+      ],
+      "js": ["src/mia-auth-content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["icons/pin2.png", "icons/pin2.png"],
+      "matches": ["https://www.ams360.com/*", "https://nowcerts.com/*", "https://*.nowcerts.com/*"]
+    }
+  ],
+  "icons": {
+    "16": "icons/favicon-16x16.png",
+    "32": "icons/favicon-32x32.png",
+    "48": "icons/apple-touch-icon.png",
+    "128": "icons/apple-touch-icon.png"
+  }
+}

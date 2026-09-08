@@ -3,6 +3,12 @@
 SmartMapper is a security-sensitive student project. Begin with PROJECT_SCOPE.md, DOM_NOTES.md,
 SECURITY.md, AGENTS.md, and relevant ADRs.
 
+All Chrome extension work starts in `apps/mia-chrome-extension`, the MIA extension cloned from
+`ChromeExtSave2AMS`. Follow its [setup guide](apps/mia-chrome-extension/README.md), run
+`pnpm dev:extension`, and load `apps/mia-chrome-extension/dist` in Chrome. Build on its current MIA
+sign-in, quote selection, and SmartMap UI while integrating the shared contracts and automation core.
+The mock sites and remote worker support development and regression testing.
+
 ## Workflow
 
 1. Create an issue with no secrets or real client data.

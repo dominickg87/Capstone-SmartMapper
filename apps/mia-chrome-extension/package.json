@@ -1,0 +1,11 @@
+{
+  "name": "@smartmapper/mia-chrome-extension",
+  "version": "1.4.21",
+  "private": true,
+  "type": "module",
+  "description": "The capstone's MIA Chrome extension with SmartMap enabled.",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch"
+  }
+}

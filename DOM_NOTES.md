@@ -60,31 +60,40 @@ the name of an approved vault/owner, never the secret value.
 | CAPTCHA expectations                 | TBD — Dom | Stop and request human action              | Carrier contact          | Week 3                |
 | IP/network restrictions              | TBD — Dom | Record approved network boundary           | Technical owner          | Week 3                |
 
-## 5. Existing M.I.A. Chrome extension
+## 5. M.I.A. Chrome extension development base
 
-| Item                                  | Status    | Dom's notes/decision                            | Secure location or owner | Needed by |
-| ------------------------------------- | --------- | ----------------------------------------------- | ------------------------ | --------- |
-| Repository owner/contact              | TBD — Dom | No cross-repository inspection without approval | Technical owner          | Week 2    |
-| Framework and build process           | TBD — Dom | Document supported integration point            | Technical owner          | Week 2    |
-| Extension ID/environment              | TBD — Dom | Reference only; no private package material     | Technical owner          | Week 3    |
-| Authentication flow                   | TBD — Dom | Diagram tokens and trust boundary, not values   | Security owner           | Week 3    |
-| Current permissions                   | TBD — Dom | Review least privilege                          | Security owner           | Week 3    |
-| Safe SmartMapper integration boundary | TBD — Dom | Define message/API contract                     | Technical owner          | Week 4    |
+2026-09-07: The user explicitly authorized inspecting and locally copying `MIA-Chrome-Extension`
+branch `ChromeExtSave2AMS` into this capstone and enabling SmartMap, then directed removal of the
+earlier standalone extension. The MIA clone is the only extension and the development base at
+`apps/mia-chrome-extension`; its [README](apps/mia-chrome-extension/README.md) records the static
+build/watch commands, inherited permissions, token handoff, and API expectations found in source.
+This resolves the source/base selection. The demo URL, deployed backend behavior, account roles,
+and shared-core integration remain unverified or pending; publication and live carrier use are not authorized
+by this source import. No credentials belong in this worksheet.
+
+| Item                                  | Status                   | Dom's notes/decision                                              | Secure location or owner | Needed by |
+| ------------------------------------- | ------------------------ | ----------------------------------------------------------------- | ------------------------ | --------- |
+| Extension source/base                 | Selected by user         | MIA clone in apps/mia-chrome-extension; only Chrome app           | Technical owner          | Complete  |
+| Framework and build process           | Implemented              | Static MV3; pnpm build:extension / pnpm dev:extension             | Technical owner          | Complete  |
+| Extension ID/environment              | TBD — Dom                | Reference only; no private package material                       | Technical owner          | Week 3    |
+| Authentication flow                   | Observed in source       | Connection page to extension token; demo deployment unverified    | Security owner           | Week 1    |
+| Current permissions                   | Recorded; review pending | See app guide; review least privilege before approved target work | Security owner           | Week 3    |
+| Safe SmartMapper integration boundary | TBD — Dom                | Define message/API contract                                       | Technical owner          | Week 4    |
 
 ## 6. M.I.A. development API
 
-| Item                           | Status    | Dom's notes/decision                    | Secure location or owner | Needed by |
-| ------------------------------ | --------- | --------------------------------------- | ------------------------ | --------- |
-| Non-production base URL        | TBD — Dom | Keep private while repository is public | API owner                | Week 12   |
-| Endpoint documentation/OpenAPI | TBD — Dom | Approved development specification      | API owner                | Week 4    |
-| Authentication approach        | TBD — Dom | Secret-name reference only              | Security owner           | Week 4    |
-| Token lifetime                 | TBD — Dom | Include refresh/revocation behavior     | Security owner           | Week 4    |
-| CORS/extension rules           | TBD — Dom | Include extension origin policy         | API owner                | Week 4    |
-| Rate limits                    | TBD — Dom | Define retry/backoff expectations       | API owner                | Week 4    |
-| Normalized quote schema        | TBD — Dom | Map to packages/contracts               | API owner                | Week 3    |
-| Synthetic sample payload       | TBD — Dom | No production-derived PII               | API owner                | Week 3    |
-| Error responses                | TBD — Dom | Include missing/conflicting cases       | API owner                | Week 4    |
-| Development tenant             | TBD — Dom | Student access boundaries               | Tenant owner             | Week 12   |
+| Item                           | Status                                    | Dom's notes/decision                                            | Secure location or owner | Needed by |
+| ------------------------------ | ----------------------------------------- | --------------------------------------------------------------- | ------------------------ | --------- |
+| Non-production base URL        | TBD — Dom                                 | Configure demo portal in extension Settings                     | API owner                | Week 1    |
+| Endpoint documentation/OpenAPI | Client routes recorded; server unverified | Verify app guide against approved backend specification         | API owner                | Week 1    |
+| Authentication approach        | Client flow recorded; server unverified   | MIA connection page and bearer token; no credential values here | Security owner           | Week 1    |
+| Token lifetime                 | TBD — Dom                                 | Include refresh/revocation behavior                             | Security owner           | Week 4    |
+| CORS/extension rules           | TBD — Dom                                 | Include extension origin policy                                 | API owner                | Week 4    |
+| Rate limits                    | TBD — Dom                                 | Define retry/backoff expectations                               | API owner                | Week 4    |
+| Normalized quote schema        | TBD — Dom                                 | Map to packages/contracts                                       | API owner                | Week 3    |
+| Synthetic sample payload       | TBD — Dom                                 | No production-derived PII                                       | API owner                | Week 3    |
+| Error responses                | TBD — Dom                                 | Include missing/conflicting cases                               | API owner                | Week 4    |
+| Development tenant             | TBD — Dom                                 | Student access boundaries and synthetic saved quotes            | Tenant owner             | Week 1    |
 
 ## 7. Source of truth and business rules
 
@@ -193,8 +202,9 @@ the name of an approved vault/owner, never the secret value.
 
 ## 16. Open notes and decisions
 
-| Date       | Decision or note                                                     | Status        | Owner               |
-| ---------- | -------------------------------------------------------------------- | ------------- | ------------------- |
-| 2026-08-27 | Repository API reported public; generic bootstrap must not be pushed | Blocking      | Dom                 |
-| TBD — Dom  | Week 4 local-versus-remote decision                                  | Pending spike | Dom/technical owner |
-| TBD — Dom  | Add approved decisions here without secret values                    | Open          | Dom                 |
+| Date       | Decision or note                                                                            | Status                  | Owner               |
+| ---------- | ------------------------------------------------------------------------------------------- | ----------------------- | ------------------- |
+| 2026-08-27 | Repository API reported public; generic bootstrap must not be pushed                        | Blocking                | Dom                 |
+| 2026-09-07 | Use the cloned MIA extension as the only extension; remove the earlier standalone extension | Explicit user direction | User / team         |
+| TBD — Dom  | Week 4 local-versus-remote decision                                                         | Pending spike           | Dom/technical owner |
+| TBD — Dom  | Add approved decisions here without secret values                                           | Open                    | Dom                 |
