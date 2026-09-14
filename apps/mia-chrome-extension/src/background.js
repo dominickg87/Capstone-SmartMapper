@@ -272,6 +272,7 @@ function collectSmartMapSnapshot() {
       name: normalizeText(control.getAttribute('name')),
       htmlId: normalizeText(control.getAttribute('id')),
       placeholder: normalizeText(control.getAttribute('placeholder')),
+      autocomplete: normalizeText(control.getAttribute('autocomplete')),
       section: sectionFor(control),
       nearbyText: nearbyText(control),
       previousCellText: cellContext.previousCellText,

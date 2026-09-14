@@ -28,6 +28,85 @@ The application is static HTML, CSS, and JavaScript. The upstream manifest loads
 directly, and the side panel loads `src/sidepanel.js` directly. The build syntax-checks the scripts
 and copies the runtime into `dist`; it needs no webpack dependencies.
 
+## Local demo with no MIA backend and no AI
+
+SmartMap normally posts the page snapshot to MIA and fills whatever the backend's AI returns. That
+needs a deployed tenant, a demo account, and a provider key. For local work you can point the
+extension at this repository's own API instead, which answers the same routes using the
+deterministic matcher in `packages/semantic-matcher`. No model, no key, no network.
+
+```sh
+pnpm install
+pnpm build:extension
+pnpm dev:api             # terminal 1 - the local mapping backend on 127.0.0.1:4300
+pnpm dev:mock-carriers   # terminal 2 - the synthetic carrier lab on localhost:4173
+```
+
+Load `apps/mia-chrome-extension/dist` at `chrome://extensions` with Developer mode on, then open
+the side panel from the toolbar icon.
+
+The local API accepts any bearer token, so skip the MIA sign-in by seeding one. Right-click inside
+the side panel, choose **Inspect**, and run this once in that console:
+
+```js
+await chrome.storage.local.set({
+  miaSmartMapAuth: {
+    access_token: 'local-dev-token-not-a-credential',
+    token_type: 'Bearer',
+    base_url: 'http://127.0.0.1:4300',
+    expires_at: null,
+  },
+});
+await chrome.storage.sync.set({ miaBaseUrl: 'http://127.0.0.1:4300' });
+location.reload();
+```
+
+In the side panel, open **SmartMap** and search `synthetic`, then select **Avery Example**.
+
+For each page below: open the URL in the active tab, click **Read Page**, then click **SmartMap**.
+
+### Steps to reproduce
+
+| Page                        | Should fill                                                                 | Should stay empty                   |
+| --------------------------- | --------------------------------------------------------------------------- | ----------------------------------- |
+| `/modern` step 1            | First name, Date of birth, State                                            | Occupancy radios, Currently insured |
+| `/modern` step 2 (Continue) | Driver 1 DOB, Driver 2 DOB, Vehicle year, Vehicle make, Second vehicle year | **Usage details**, Valid license    |
+| `/modern` step 3 (Continue) | nothing                                                                     | **Mock submit is never clicked**    |
+| `/classic?step=1`           | Applicant first/last name, Contact phone, Year built                        | Insurance status radios             |
+| `/classic?step=2`           | Both listed driver names, both auto makes                                   | **Additional details (optional)**   |
+| `/classic?step=3`           | nothing                                                                     | **Mock submit is never clicked**    |
+| `/modern?layout=changed`    | same as step 1, every label reworded                                        | as above                            |
+
+The bolded columns are the point. "Usage details" and "Classification code" are deliberately
+ambiguous fields in the mock lab, and a field left blank there is the matcher refusing to guess.
+
+Expected behavior worth checking by hand:
+
+- **Date of birth receives ISO** on `type="date"` inputs and `MM/DD/YYYY` in a plain text box.
+- **State resolves `IL` to the "Illinois" option** rather than blanking the select.
+- **Driver 1 gets Avery, Driver 2 gets Riley** — never the same person twice, never swapped.
+- **Changed layouts still fill.** `?layout=changed` renames every label ("Given name", "Birth date",
+  "Model year", "Vehicle manufacturer") and the fields still resolve, because the match is on meaning
+  rather than an exact string.
+- **A missing source is left blank.** The synthetic applicant has no second address line, so an
+  "Apt/Suite" control is skipped rather than invented.
+- **Two identical controls tie and are left alone.** No value entered beats a wrong value entered.
+
+Every assignment carries a `source_path` and the evidence string that justified it, so any fill can
+be traced back to the signal behind it. The same expectations run headlessly as
+`apps/orchestrator-api/src/mock-carrier-pages.test.ts` under `pnpm test`.
+
+To go back to the real MIA backend, clear the override:
+
+```js
+await chrome.storage.local.remove('miaSmartMapAuth');
+await chrome.storage.sync.remove('miaBaseUrl');
+```
+
+This path is development-only. The local API binds to loopback, serves synthetic quotes, and
+performs no authorization; it must never be exposed off the machine. See
+[ADR 0006](../../docs/adr/0006-deterministic-semantic-matcher.md).
+
 ## Teammate demo setup
 
 1. Load the extension and open its side panel using the Chrome toolbar icon.

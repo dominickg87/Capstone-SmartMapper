@@ -8,7 +8,10 @@
     "dev": "tsx watch src/server.ts"
   },
   "dependencies": {
+    "@smartmapper/automation-core": "workspace:*",
     "@smartmapper/contracts": "workspace:*",
-    "@smartmapper/observability": "workspace:*"
+    "@smartmapper/mia-client": "workspace:*",
+    "@smartmapper/observability": "workspace:*",
+    "@smartmapper/semantic-matcher": "workspace:*"
   }
 }

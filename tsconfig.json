@@ -6,6 +6,7 @@
     { "path": "packages/carrier-adapters" },
     { "path": "packages/mia-client" },
     { "path": "packages/ai-mapper" },
+    { "path": "packages/semantic-matcher" },
     { "path": "packages/observability" },
     { "path": "apps/mock-carriers" },
     { "path": "apps/orchestrator-api" },

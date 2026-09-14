@@ -25,6 +25,7 @@
       "@smartmapper/carrier-adapters": ["packages/carrier-adapters/src/index.ts"],
       "@smartmapper/mia-client": ["packages/mia-client/src/index.ts"],
       "@smartmapper/ai-mapper": ["packages/ai-mapper/src/index.ts"],
+      "@smartmapper/semantic-matcher": ["packages/semantic-matcher/src/index.ts"],
       "@smartmapper/observability": ["packages/observability/src/index.ts"],
       "@smartmapper/automation-worker": ["apps/automation-worker/src/index.ts"]
     }

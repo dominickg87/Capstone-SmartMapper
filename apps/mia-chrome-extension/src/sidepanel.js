@@ -170,10 +170,18 @@ function buildAbsoluteUrl(path) {
   return `${trimmedBase}${normalizedPath}`;
 }
 
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isLoopbackDevelopmentUrl(parsed) {
+  return parsed.protocol === 'http:' && LOOPBACK_HOSTNAMES.has(parsed.hostname);
+}
+
 function buildSmartMapHostPermissionPattern(url) {
   const parsed = new URL(url);
 
-  if (parsed.protocol !== 'https:') {
+  // Loopback is a development origin: it is the repository's own mock carrier lab, it never
+  // leaves the machine, and it cannot be a real carrier. Everything else must still be HTTPS.
+  if (parsed.protocol !== 'https:' && !isLoopbackDevelopmentUrl(parsed)) {
     throw new Error('SmartMap can only read secure HTTPS carrier pages.');
   }
 

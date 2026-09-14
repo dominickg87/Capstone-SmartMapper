@@ -23,6 +23,8 @@ export const MappingEvidenceSchema = z
       'nearby_text',
       'name',
       'stable_id',
+      'autocomplete',
+      'placeholder',
       'prior_approved_mapping',
       'semantic_similarity',
     ]),

@@ -46,6 +46,8 @@ surface but cannot add new action types.
   repeated rows, conditionals, expected validation, navigation, review, and stop points.
 - mia-client hides quote search/retrieval. Bootstrap implements only synthetic memory data.
 - ai-mapper hides provider SDKs. Bootstrap implements only deterministic sanitized matching.
+- semantic-matcher resolves fields from weighted page signals with no model, behind the same
+  AiMapperProvider boundary. It is the no-AI operating mode ADR 0003 keeps open.
 - observability recursively redacts sensitive structured keys and likely PII in messages.
 - mia-chrome-extension is the only Chrome app. It supplies the MIA sign-in/quote UI, page snapshot,
   mapping API calls, staged fill, and training-template flow. Shared policy, provenance, read-back,
