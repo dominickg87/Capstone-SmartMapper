@@ -62,6 +62,10 @@ export const PropertySchema = z
     yearBuilt: z.number().int().min(1700).max(2100).optional(),
     occupancy: z.enum(['primary', 'secondary', 'rental', 'vacant', 'other']).optional(),
     constructionType: z.string().optional(),
+    squareFeet: z.number().int().positive().optional(),
+    style: z.string().optional(),
+    stories: z.number().positive().optional(),
+    numberOfFamilies: z.number().int().positive().optional(),
   })
   .strict();
 export type Property = z.infer<typeof PropertySchema>;

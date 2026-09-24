@@ -68,6 +68,10 @@ export const syntheticQuote: MiaQuotePayload = {
       yearBuilt: 2005,
       occupancy: 'primary',
       constructionType: 'synthetic-frame',
+      squareFeet: 1850,
+      style: 'ranch',
+      stories: 2.5,
+      numberOfFamilies: 1,
     },
   ],
   priorInsurance: {

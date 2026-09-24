@@ -16,6 +16,7 @@ test('MIA development build watches edits, retains the last valid build, and rec
   });
   const watcher = spawn(process.execPath, ['build.mjs', '--watch'], {
     cwd: app,
+    env: { ...process.env, SMARTMAPPER_WORKSPACE_ROOT: resolve('.') },
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

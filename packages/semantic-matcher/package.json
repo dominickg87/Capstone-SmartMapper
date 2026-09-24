@@ -1,0 +1,25 @@
+{
+  "name": "@smartmapper/semantic-matcher",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic, offline field matching from semantic source paths to accessible page controls.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@smartmapper/ai-mapper": "workspace:*",
+    "@smartmapper/automation-core": "workspace:*",
+    "@smartmapper/contracts": "workspace:*",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@smartmapper/mia-client": "workspace:*"
+  }
+}

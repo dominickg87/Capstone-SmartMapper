@@ -19,10 +19,17 @@ export const AccessibleControlSchema = z
     inputType: z.string().optional(),
     required: z.boolean(),
     disabled: z.boolean(),
+    readOnly: z.boolean().optional(),
+    visible: z.boolean().optional(),
+    placeholder: z.string().optional(),
+    autocomplete: z.string().optional(),
+    containerKey: z.string().min(1).optional(),
+    containerLabel: z.string().min(1).optional(),
     options: z.array(z.object({ label: z.string(), value: z.string() }).strict()).optional(),
     nearbyText: z.array(z.string()),
   })
   .strict();
+export type AccessibleControl = z.infer<typeof AccessibleControlSchema>;
 
 export const IframeMetadataSchema = z
   .object({

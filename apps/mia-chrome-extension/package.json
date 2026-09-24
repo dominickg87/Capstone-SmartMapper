@@ -4,6 +4,11 @@
   "private": true,
   "type": "module",
   "description": "The capstone's MIA Chrome extension with SmartMap enabled.",
+  "dependencies": {
+    "@smartmapper/automation-core": "workspace:*",
+    "@smartmapper/mia-client": "workspace:*",
+    "@smartmapper/semantic-matcher": "workspace:*"
+  },
   "scripts": {
     "build": "node build.mjs",
     "dev": "node build.mjs --watch"
