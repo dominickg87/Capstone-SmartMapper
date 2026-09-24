@@ -1017,10 +1017,6 @@ chrome.action.onClicked.addListener(async (tab) => {
   );
 });
 
-chrome.tabs.onActivated.addListener(({ tabId }) => {
-  prepareSidePanel(tabId);
-});
-
 chrome.tabs.onRemoved.addListener((tabId) => {
   preparedTabs.delete(tabId);
 });

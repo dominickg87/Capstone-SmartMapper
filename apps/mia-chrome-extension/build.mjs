@@ -31,7 +31,7 @@ async function build() {
   }
 
   const manifest = JSON.parse(await readFile(join(appDirectory, 'manifest.json'), 'utf8'));
-  if (manifest.manifest_version !== 3 || manifest.side_panel?.default_path !== 'sidepanel.html') {
+  if (manifest.manifest_version !== 3 || !manifest.permissions?.includes('sidePanel')) {
     throw new Error('Unexpected extension entry points. Review the build file list.');
   }
   // Only remove this application's generated output, never a caller-supplied path.

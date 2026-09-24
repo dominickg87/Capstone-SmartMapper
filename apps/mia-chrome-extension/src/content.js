@@ -16,10 +16,6 @@ const IS_NOWCERTS_HOST = /(^|\.)nowcerts\.com$/i.test(window.location.hostname);
 let injectionAttempts = 0;
 let missingAddressLogged = false;
 
-chrome.runtime.sendMessage({ type: 'MIA_PREPARE_PANEL' }).catch(() => {
-  /* ignore */
-});
-
 function openPanelWithAddress(address) {
   if (address) {
     chrome.runtime
