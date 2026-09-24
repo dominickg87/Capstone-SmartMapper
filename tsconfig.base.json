@@ -20,6 +20,7 @@
     "sourceMap": true,
     "baseUrl": ".",
     "paths": {
+      "@smartmapper/automation-core/browser": ["packages/automation-core/src/browser.ts"],
       "@smartmapper/contracts": ["packages/contracts/src/index.ts"],
       "@smartmapper/automation-core": ["packages/automation-core/src/index.ts"],
       "@smartmapper/carrier-adapters": ["packages/carrier-adapters/src/index.ts"],

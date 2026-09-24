@@ -1109,6 +1109,20 @@
             Enter just your subdomain or a full portal URL. We’ll remember your choice.
           </p>
         </div>
+        <details>
+          <summary>Advanced mapping</summary>
+          <div class="fieldset">
+            <label for="smartMapMethod">Mapping method</label>
+            <select id="smartMapMethod" class="smartmap-input">
+              <option value="deterministic">SmartMap (deterministic)</option>
+              <option value="server">MIA server mapping (comparison)</option>
+            </select>
+            <p class="hint">
+              SmartMap uses the new matcher with your selected MIA quote. The previous server mapper
+              is available here for comparison. Both use the same MIA connection.
+            </p>
+          </div>
+        </details>
       </dialog>
 
       <dialog id="amsSubscriptionDialog">
@@ -1265,6 +1279,7 @@
 
         <section id="smartMapMappingCard" class="card" hidden>
           <h2>Mapping</h2>
+          <p id="smartMapMethodNote">SmartMap uses your selected MIA quote.</p>
           <div class="button-row">
             <button id="smartMapReadPageBtn" class="primary" type="button">
               <svg
@@ -1317,6 +1332,7 @@
             <span id="smartMapMappingStateText">Waiting for page read.</span>
           </div>
           <div id="smartMapFillSummary" class="smartmap-fill-summary" hidden></div>
+          <ul id="smartMapReviewItems" aria-label="Fields needing review" hidden></ul>
           <button
             id="smartMapSaveTrainingBtn"
             class="btn-secondary smartmap-training-button"

@@ -11,9 +11,12 @@ Its current flow is:
                          |
     background filler -> review / continue / save mapping template
 
-The MIA API and its AI implementation live outside this repository. The extension currently calls
-them directly and does not yet use the shared-core contracts or policy gates. Its existing behavior
-and gaps are documented in [the app guide](../apps/mia-chrome-extension/README.md).
+The MIA API and its AI implementation live outside this repository. The extension now defaults to
+the shared deterministic matcher with quote data retrieved through the existing MIA API. That path
+uses shared action schemas, policy gates, source provenance, and normalized read-back. The original
+server-mapping flow above remains selectable and retains its inherited gaps. See
+[ADR 0007](adr/0007-extension-deterministic-mia-flow.md) and
+[the app guide](../apps/mia-chrome-extension/README.md).
 
 The target architecture integrates that extension with one policy-controlled core and two execution
 adapters. The worker remains a supporting feasibility proof of concept:

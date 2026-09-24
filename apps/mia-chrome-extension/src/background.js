@@ -1,3 +1,21 @@
+import { normalizeValue, transformValue } from '@smartmapper/automation-core/browser';
+import {
+  resolveExtensionQuoteField,
+  validateExtensionQuoteIdentity,
+  ExtensionQuoteError,
+} from '@smartmapper/mia-client';
+import {
+  planExtensionMappings,
+  extensionPageIdentity,
+  ExtensionMappingError,
+} from '@smartmapper/semantic-matcher';
+import {
+  SMART_MAP_PROTOCOL_VERSION,
+  SMART_MAP_BUILD_VERSION,
+  SMART_MAP_RELOAD_MESSAGE,
+  isCompatibleSmartMapWorker,
+} from './smartmap-protocol.js';
+
 let lastAddress = '';
 const preparedTabs = new Set();
 const SMART_MAP_AUTH_STORAGE_KEY = 'miaSmartMapAuth';
@@ -185,7 +203,7 @@ function collectSmartMapSnapshot() {
         text: normalizeText(option.textContent || option.label || option.value),
         value: normalizeText(option.value),
         selected: option.selected,
-        disabled: option.disabled,
+        disabled: option.disabled || option.closest('optgroup')?.disabled === true,
       }))
       .filter((option) => option.text || option.value)
       .slice(0, 100);
@@ -273,6 +291,9 @@ function collectSmartMapSnapshot() {
       htmlId: normalizeText(control.getAttribute('id')),
       placeholder: normalizeText(control.getAttribute('placeholder')),
       autocomplete: normalizeText(control.getAttribute('autocomplete')),
+      accessibleName: labelledByText(control) || normalizeText(control.getAttribute('aria-label')),
+      readOnly:
+        control.hasAttribute('readonly') || control.getAttribute('aria-readonly') === 'true',
       section: sectionFor(control),
       nearbyText: nearbyText(control),
       previousCellText: cellContext.previousCellText,
@@ -318,10 +339,10 @@ async function analyzeActiveSmartMapTab() {
     func: collectSmartMapSnapshot,
   });
 
-  return result?.result;
+  return { ...result?.result, tabId: tab.id, documentId: result?.documentId };
 }
 
-async function applySmartMapAssignments(assignments) {
+async function applySmartMapAssignments(assignments, strict = false) {
   const MIN_CONFIDENCE_TO_FILL = 0.5;
   const CONDITIONAL_CHANGE_SETTLE_MS = 900;
 
@@ -555,6 +576,15 @@ async function applySmartMapAssignments(assignments) {
     ].some((keyword) => label.includes(keyword));
   };
   const fillSelect = (select, value, fillOptions = {}) => {
+    if (strict) {
+      const matches = Array.from(select.options).filter(
+        (option) => !option.disabled && option.value === value,
+      );
+      if (matches.length !== 1) return false;
+      select.value = value;
+      dispatchValueEvents(select, true, false);
+      return select.value === value;
+    }
     const desired = normalizeText(value);
     const rankedOptions = Array.from(select.options || [])
       .filter((candidate) => !candidate.disabled)
@@ -702,6 +732,29 @@ async function applySmartMapAssignments(assignments) {
     message: '',
   };
   const fillAssignment = (assignment, field, fillOptions = {}) => {
+    if (strict) {
+      const element = field.element;
+      const expected = assignment.target_snapshot;
+      if (
+        !element.isConnected ||
+        !isVisible(element) ||
+        !expected ||
+        element.tagName.toLowerCase() !== expected.tag ||
+        field.type !== expected.type ||
+        (element.getAttribute('id') || '') !== expected.htmlId ||
+        (element.getAttribute('name') || '') !== expected.name ||
+        (!expected.htmlId && !expected.name && fieldLabel(element) !== expected.label) ||
+        element.hasAttribute('readonly') ||
+        element.getAttribute('aria-readonly') === 'true'
+      ) {
+        summary.skipped.push({ field_id: assignment.field_id, reason: 'page_changed' });
+        return false;
+      }
+      if (String(element.value || '').trim()) {
+        summary.skipped.push({ field_id: assignment.field_id, reason: 'existing_value' });
+        return false;
+      }
+    }
     const result = fillElement(field.element, assignment.value, field.type, fillOptions);
     if (result.filled) {
       summary.filled.push({
@@ -785,7 +838,140 @@ async function applySmartMapAssignments(assignments) {
       });
   }
 
+  if (strict) {
+    await sleep(100);
+    for (const filled of summary.filled) {
+      const element = byFieldId.get(filled.field_id)?.element;
+      filled.observed = element?.isConnected ? element.value : null;
+      filled.valid = element?.validity?.valid === true;
+    }
+  }
   return summary;
+}
+
+const deterministicRuns = new Set();
+
+async function fillDeterministically(message) {
+  validateExtensionQuoteIdentity(message.quote, message.quoteId);
+  const { snapshot, steps, skipped } = planExtensionMappings(message.snapshot);
+  if (deterministicRuns.has(snapshot.tabId))
+    throw new ExtensionMappingError('run_in_progress', 'SmartMap is already running on this tab.');
+  deterministicRuns.add(snapshot.tabId);
+  const summary = {
+    filled: [],
+    skipped: [...skipped],
+    lowConfidence: [],
+    source: 'deterministic',
+    paused: false,
+  };
+  try {
+    const originalIdentity = extensionPageIdentity(snapshot);
+    for (const step of steps) {
+      const current = await analyzeActiveSmartMapTab();
+      if (extensionPageIdentity(current) !== originalIdentity) {
+        summary.skipped.push({ source_path: step.definition.sourcePath, reason: 'page_changed' });
+        summary.paused = true;
+        break;
+      }
+      let source;
+      let value;
+      try {
+        source = resolveExtensionQuoteField(message.quote, step.definition.sourcePath);
+        value = transformValue(
+          source.value,
+          step.field.type === 'date' ? 'identity' : step.definition.transformation,
+        );
+      } catch (error) {
+        summary.skipped.push({
+          source_path: step.definition.sourcePath,
+          reason: error instanceof ExtensionQuoteError ? error.reasonCode : 'invalid_source',
+        });
+        continue;
+      }
+      if (step.action.type === 'selectOption') {
+        const options = (step.field.options || [])
+          .filter((option) => !option.disabled)
+          .filter(
+            (option) =>
+              normalizeValue(option.value, 'case_insensitive') ===
+                normalizeValue(value, 'case_insensitive') ||
+              normalizeValue(option.label, 'case_insensitive') ===
+                normalizeValue(value, 'case_insensitive'),
+          );
+        if (options.length !== 1 || !options[0].value) {
+          summary.skipped.push({
+            source_path: step.definition.sourcePath,
+            reason: 'unsupported_option',
+          });
+          continue;
+        }
+        value = options[0].value;
+      }
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: snapshot.tabId, documentIds: [snapshot.documentId] },
+        func: applySmartMapAssignments,
+        args: [
+          [
+            {
+              field_id: step.field.id,
+              value,
+              confidence: step.confidence,
+              target_snapshot: step.field,
+            },
+          ],
+          true,
+        ],
+      });
+      const filled = result?.result?.filled?.[0];
+      if (!filled) {
+        summary.skipped.push({
+          source_path: step.definition.sourcePath,
+          reason: result?.result?.skipped?.[0]?.reason || 'entry_failed',
+        });
+        continue;
+      }
+      const normalization =
+        step.action.type === 'selectOption'
+          ? 'case_insensitive'
+          : step.definition.readBackNormalization;
+      const observed = filled.observed;
+      const matched =
+        observed !== null &&
+        observed !== undefined &&
+        filled.valid &&
+        normalizeValue(value, normalization) === normalizeValue(observed, normalization);
+      const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(normalizeValue(observed ?? '', normalization)),
+      );
+      const audit = {
+        field_id: step.field.id,
+        source_path: step.definition.sourcePath,
+        source_data_path: source.sourceDataPath,
+        read_back_matched: Boolean(matched),
+        observed_value_hash: Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, '0'),
+        ).join(''),
+      };
+      if (!matched) {
+        summary.skipped.push({ ...audit, reason: 'read_back_mismatch' });
+        summary.paused = true;
+        break;
+      }
+      summary.filled.push(audit);
+      if (result.result.paused) {
+        summary.paused = true;
+        break;
+      }
+    }
+    return summary;
+  } catch {
+    summary.skipped.push({ reason: 'execution_interrupted' });
+    summary.paused = true;
+    return summary;
+  } finally {
+    deterministicRuns.delete(snapshot.tabId);
+  }
 }
 
 async function fillActiveSmartMapTab(assignments) {
@@ -956,6 +1142,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
       return true;
     }
+    case 'MIA_SMART_MAP_CAPABILITIES': {
+      sendResponse({
+        ok: true,
+        protocolVersion: SMART_MAP_PROTOCOL_VERSION,
+        buildVersion: SMART_MAP_BUILD_VERSION,
+      });
+      return false;
+    }
     case 'MIA_SMART_MAP_ANALYZE': {
       analyzeActiveSmartMapTab()
         .then((snapshot) => {
@@ -966,6 +1160,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({
             ok: false,
             error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      return true;
+    }
+    case 'MIA_SMART_MAP_DETERMINISTIC_FILL': {
+      if (!isCompatibleSmartMapWorker(message)) {
+        sendResponse({
+          ok: false,
+          reasonCode: 'incompatible_worker',
+          error: SMART_MAP_RELOAD_MESSAGE,
+        });
+        return false;
+      }
+      fillDeterministically(message)
+        .then((summary) => sendResponse({ ok: true, summary }))
+        .catch((error) => {
+          const knownError = error instanceof ExtensionMappingError;
+          sendResponse({
+            ok: false,
+            reasonCode: knownError ? error.reasonCode : 'mapping_unavailable',
+            error: knownError
+              ? error.message
+              : error instanceof ExtensionQuoteError
+                ? 'MIA quote details do not match the selected quote. Select the quote again.'
+                : 'SmartMap could not prepare the mappings (mapping_unavailable). Read Page again.',
           });
         });
       return true;

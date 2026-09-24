@@ -23,6 +23,9 @@ importers:
       '@types/node':
         specifier: ^24.13.3
         version: 24.13.3
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       eslint:
         specifier: ^10.9.1
         version: 10.9.1
@@ -69,7 +72,17 @@ importers:
         specifier: ^1.62.1
         version: 1.62.1
 
-  apps/mia-chrome-extension: {}
+  apps/mia-chrome-extension:
+    dependencies:
+      '@smartmapper/automation-core':
+        specifier: workspace:*
+        version: link:../../packages/automation-core
+      '@smartmapper/mia-client':
+        specifier: workspace:*
+        version: link:../../packages/mia-client
+      '@smartmapper/semantic-matcher':
+        specifier: workspace:*
+        version: link:../../packages/semantic-matcher
 
   apps/mock-carriers: {}
 

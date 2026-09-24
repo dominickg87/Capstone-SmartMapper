@@ -22,18 +22,26 @@ describe('action policy', () => {
     ).toEqual({ disposition: 'allow', reasonCode: 'allowlisted_action' });
   });
 
-  it.each(['Submit quote', 'Bind policy', 'Accept terms', 'CAPTCHA bypass'])(
-    'blocks clickContinue targeting prohibited intent: %s',
-    (accessibleName) => {
-      expect(
-        evaluateActionPolicy({
-          ...baseAction,
-          type: 'clickContinue',
-          target: { accessibleName, role: 'button' },
-        }).disposition,
-      ).toBe('block');
-    },
-  );
+  it.each([
+    'Submit quote',
+    'Bind policy',
+    'Accept terms',
+    'CAPTCHA bypass',
+    'Consent',
+    'Electronic signature',
+    'Authorization',
+    'Attestation',
+    'I certify',
+    'Acknowledgement',
+  ])('blocks clickContinue targeting prohibited intent: %s', (accessibleName) => {
+    expect(
+      evaluateActionPolicy({
+        ...baseAction,
+        type: 'clickContinue',
+        target: { accessibleName, role: 'button' },
+      }).disposition,
+    ).toBe('block');
+  });
 
   it('blocks unknown and arbitrary script actions', () => {
     expect(

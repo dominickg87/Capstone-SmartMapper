@@ -10,7 +10,7 @@ export interface PolicyDecision {
 }
 
 const prohibitedIntent =
-  /\b(submit|bind|purchase|buy|attest|signature|sign|accept terms|authorize report|captcha|mfa bypass)\b/i;
+  /\b(submit|bind|purchase|buy|attest\w*|signature|sign|consent|certif\w*|acknowledg\w*|agree|accept terms|authoriz\w*|captcha|mfa|one.time (?:code|password))\b/i;
 
 function targetText(action: AutomationAction): string {
   if ('target' in action) {

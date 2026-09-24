@@ -1,3 +1,10 @@
+import {
+  requireSmartMapWorker,
+  SMART_MAP_PROTOCOL_VERSION,
+  SMART_MAP_BUILD_VERSION,
+  SMART_MAP_INTERRUPTED_MESSAGE,
+} from './smartmap-protocol.js';
+
 const DEFAULT_BASE_URL = 'https://mia.agency';
 const SMART_MAP_AUTH_STORAGE_KEY = 'miaSmartMapAuth';
 const SMART_MAP_SEARCH_DEBOUNCE_MS = 250;
@@ -60,6 +67,9 @@ const smartMapSelectedQuote = document.getElementById('smartMapSelectedQuote');
 const smartMapMappingCard = document.getElementById('smartMapMappingCard');
 const smartMapReadPageButton = document.getElementById('smartMapReadPageBtn');
 const smartMapRunButton = document.getElementById('smartMapRunBtn');
+const smartMapMethod = document.getElementById('smartMapMethod');
+const smartMapMethodNote = document.getElementById('smartMapMethodNote');
+const smartMapReviewItems = document.getElementById('smartMapReviewItems');
 const smartMapPageSummary = document.getElementById('smartMapPageSummary');
 const smartMapFieldCount = document.getElementById('smartMapFieldCount');
 const smartMapMappingState = document.getElementById('smartMapMappingState');
@@ -315,7 +325,8 @@ function renderExtensionVersion() {
     return;
   }
 
-  const version = chrome.runtime.getManifest?.().version || '';
+  const manifest = chrome.runtime.getManifest?.();
+  const version = manifest?.version_name || manifest?.version || '';
   extensionVersion.textContent = version ? `Version ${version}` : '';
 }
 
@@ -455,6 +466,14 @@ function setSmartMapIndicator(state, message) {
 }
 
 function renderSmartMapFillSummary(summary) {
+  smartMapReviewItems.replaceChildren();
+  const reviewItems = summary?.source === 'deterministic' ? summary.skipped || [] : [];
+  smartMapReviewItems.hidden = reviewItems.length === 0;
+  for (const item of reviewItems) {
+    const row = document.createElement('li');
+    row.textContent = `${item.source_path || item.field_id || 'Page'}: ${item.reason.replaceAll('_', ' ')}`;
+    smartMapReviewItems.appendChild(row);
+  }
   if (!smartMapFillSummary) {
     return;
   }
@@ -1239,6 +1258,11 @@ function setSmartMapRunButtonMode(mode) {
 }
 
 function updateSmartMapActionState(isBusy = false) {
+  smartMapMethod.disabled = isBusy;
+  smartMapQuoteSearch.disabled = isBusy || !smartMapConnected;
+  smartMapQuoteResults.querySelectorAll('button').forEach((button) => {
+    button.disabled = isBusy;
+  });
   if (smartMapReadPageButton) {
     smartMapReadPageButton.disabled = isBusy || !selectedSmartMapQuote;
   }
@@ -1526,6 +1550,7 @@ async function readSmartMapPage(actionLabel, requireQuote = true) {
   renderSmartMapFillSummary(null);
 
   try {
+    if (smartMapMethod.value === 'deterministic') await requireSmartMapWorker();
     await ensureSmartMapPageAccess();
 
     const response = await chrome.runtime.sendMessage({ type: 'MIA_SMART_MAP_ANALYZE' });
@@ -1652,7 +1677,6 @@ async function runSmartMapFill() {
   if (smartMapShouldReadBeforeRun) {
     const pageRead = await readSmartMapPage('Reading updated page', true);
     if (!pageRead || !lastSmartMapSnapshot) {
-      setSmartMapIndicator('red', 'Could not read updated carrier page.');
       return;
     }
   }
@@ -1663,6 +1687,44 @@ async function runSmartMapFill() {
   setSmartMapIndicator('yellow', 'Mapping MIA data to carrier fields.');
 
   try {
+    if (smartMapMethod.value === 'deterministic') {
+      await requireSmartMapWorker();
+      // Refresh from the same authenticated MIA API. Do not substitute the search summary.
+      const quoteId = selectedSmartMapQuote.id;
+      const detail = await smartMapApiFetch(`/api/extension/quotes/${encodeURIComponent(quoteId)}`);
+      if (!detail.quote || detail.quote.id !== quoteId) {
+        throw new Error('MIA did not return the selected quote details. No fields were filled.');
+      }
+      const response = await chrome.runtime
+        .sendMessage({
+          type: 'MIA_SMART_MAP_DETERMINISTIC_FILL',
+          protocolVersion: SMART_MAP_PROTOCOL_VERSION,
+          buildVersion: SMART_MAP_BUILD_VERSION,
+          quoteId,
+          quote: detail.quote,
+          snapshot: lastSmartMapSnapshot,
+        })
+        .catch(() => null);
+      if (!response?.ok) throw new Error(response?.error || SMART_MAP_INTERRUPTED_MESSAGE);
+      if (!Array.isArray(response.summary?.filled) || !Array.isArray(response.summary?.skipped)) {
+        throw new Error(SMART_MAP_INTERRUPTED_MESSAGE);
+      }
+      lastSmartMapFillSummary = response.summary;
+      renderSmartMapFillSummary(response.summary);
+      smartMapShouldReadBeforeRun = true;
+      setSmartMapRunButtonMode('continue');
+      const filled = response.summary.filled.length;
+      const review = response.summary.skipped.length;
+      setSmartMapIndicator(
+        filled && !review && !response.summary.paused ? 'green' : 'yellow',
+        response.summary.paused
+          ? 'Deterministic mapping paused. Review the page, then Read Page again.'
+          : filled
+            ? `Deterministic matcher filled ${filled} field${filled === 1 ? '' : 's'} and checked their values. Review before continuing.`
+            : 'No supported matches with available quote data. Review the items below; the MIA quote API must return full details.',
+      );
+      return;
+    }
     const data = await smartMapApiFetch('/api/extension/smart-map/map', {
       method: 'POST',
       headers: {
@@ -1864,6 +1926,16 @@ function initializeSelects() {
 }
 
 function wireEvents() {
+  smartMapMethod.addEventListener('change', () => {
+    resetSmartMapReadMemory();
+    renderSmartMapFillSummary(null);
+    smartMapMethodNote.textContent =
+      smartMapMethod.value === 'deterministic'
+        ? 'SmartMap uses your selected MIA quote.'
+        : 'Comparison mode: MIA server mapper. Change in Settings.';
+    chrome.storage.local.set({ miaMappingMethod: smartMapMethod.value }).catch(() => {});
+    setSmartMapIndicator('yellow', 'Mapping method changed. Read Page again.');
+  });
   personalSelect.addEventListener('change', handlePersonalSelection);
   commercialSelect.addEventListener('change', handleCommercialSelection);
   saveBaseUrlButton.addEventListener('click', saveBaseUrl);
@@ -2204,6 +2276,14 @@ function handleIncomingMessage(message) {
 }
 
 async function init() {
+  const { miaMappingMethod } = await chrome.storage.local.get({
+    miaMappingMethod: 'deterministic',
+  });
+  smartMapMethod.value = miaMappingMethod === 'server' ? 'server' : 'deterministic';
+  smartMapMethodNote.textContent =
+    smartMapMethod.value === 'deterministic'
+      ? 'SmartMap uses your selected MIA quote.'
+      : 'Comparison mode: MIA server mapper. Change in Settings.';
   renderExtensionVersion();
   initializeSelects();
   wireEvents();
