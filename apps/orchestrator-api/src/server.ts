@@ -2,7 +2,7 @@ import { AstraMapperProvider } from '@smartmapper/ai-mapper';
 import { MiaActiveTabSourceProvider } from '@smartmapper/mia-client';
 import insights from 'applicationinsights';
 import { ActiveTabJobService } from './active-tab-service.js';
-import { AzureCheckpointStore } from './checkpoints.js';
+import { AzureCheckpointStore, MemoryCheckpointStore } from './checkpoints.js';
 import { configuration } from './config.js';
 import { createApi } from './http.js';
 
@@ -18,8 +18,19 @@ if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
     .setSendLiveMetrics(false)
     .start();
 }
-const store = new AzureCheckpointStore(config.tableEndpoint, config.table);
-const mapper = new AstraMapperProvider(config.model);
+const store =
+  config.checkpoints.kind === 'memory'
+    ? new MemoryCheckpointStore()
+    : new AzureCheckpointStore(config.checkpoints.endpoint, config.checkpoints.table);
+const mapper = new AstraMapperProvider(config.model, undefined, (timing) => {
+  if (process.env.NODE_ENV === 'development')
+    console.info(JSON.stringify({ event: 'smartmapper.model_timing', ...timing }));
+  insights.defaultClient?.trackMetric({
+    name: 'smartmapper.model_duration_ms',
+    value: timing.elapsedMs,
+    properties: { stage: timing.stage, serviceTier: timing.serviceTier },
+  });
+});
 const service = new ActiveTabJobService(
   store,
   new MiaActiveTabSourceProvider(config.access.miaOrigins),
@@ -40,7 +51,7 @@ const cleanup = setInterval(() => {
   });
 }, 5 * 60_000);
 cleanup.unref();
-server.listen(config.port, '0.0.0.0', () => {
+server.listen(config.port, config.listenHost, () => {
   console.info('SmartMapper API ready');
 });
 process.on('SIGTERM', () => {

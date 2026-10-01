@@ -1,12 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { JobView, MappingChatMessage } from '@smartmapper/contracts';
+import type { FieldReview, JobView, MappingChatMessage } from '@smartmapper/contracts';
 import { ExtensionExecutor, type QuoteChoice } from './controller.js';
 import { connectionDetails, jobSession } from './session.js';
 import { config } from './config.js';
 import './sidepanel.css';
 
+const reviewMessages: Record<FieldReview['reason'], string> = {
+  missing_source: 'A matching saved answer is missing or unavailable in M.I.A.',
+  missing_question_context: 'I could not confidently identify what this field asks.',
+  ambiguous_match: 'I am not confident which answer belongs here. Please review.',
+  human_only: 'This control needs you to handle it.',
+  validation_error: 'The page reported a validation error. Please check this entry.',
+  unsupported_control: 'I could not safely perform the proposed action on this control.',
+  source_mismatch: 'The proposed entry could not be verified against the saved M.I.A. answer.',
+  retry_limit: 'I reached the retry limit for this field. Please review it.',
+  page_changed: 'The page changed. Please review it, then Resume mapping.',
+};
+
 function App() {
+  const extensionVersion = chrome.runtime.getManifest().version;
   const [connected, setConnected] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
   const [conversation, setConversation] = useState<MappingChatMessage[]>([]);
@@ -74,6 +87,7 @@ function App() {
       <header>
         <div className="eyebrow">M.I.A. • PROOF OF CONCEPT</div>
         <h1>SmartMapper</h1>
+        <p>Version {extensionVersion}</p>
         <p>Your answers. One page at a time.</p>
       </header>
       <section>
@@ -110,7 +124,9 @@ function App() {
             onClick={() =>
               void perform(async () => {
                 await navigator.clipboard.writeText(
-                  'Extension ID: ' +
+                  'Extension version: ' +
+                    extensionVersion +
+                    '\nExtension ID: ' +
                     chrome.runtime.id +
                     '\nM.I.A. tenant/user ID: ' +
                     (principal ?? 'Not connected') +
@@ -230,11 +246,55 @@ function App() {
       {!!job?.reviews.length && (
         <section>
           <h2>Needs your review</h2>
+          <p>
+            Ask for a suggested match, or enter the answer on the carrier page and skip that field.
+            Skipping leaves its value alone and continues mapping.
+          </p>
           <ul>
             {job.reviews.map((review, index) => (
               <li key={index}>
                 {review.entity ? review.entity + ': ' : ''}
-                {review.question} — {review.reason.replaceAll('_', ' ')}
+                {review.question} — {reviewMessages[review.reason]}
+                <div className="actions">
+                  <button
+                    className="secondary"
+                    disabled={working || chatting}
+                    onClick={() => {
+                      setChatting(true);
+                      void perform(async () => {
+                        try {
+                          await controller.current?.sendChat(
+                            'Suggest the best supported match for ' +
+                              review.question +
+                              ' (' +
+                              review.entity +
+                              ', field ' +
+                              (review.elementId ?? 'page') +
+                              '). Explain the PDF question and answer it comes from. If the quote sheet does not support an answer, say so. Do not invent facts or fill anything yet.',
+                          );
+                        } finally {
+                          setChatting(false);
+                        }
+                      }, false);
+                    }}
+                  >
+                    Suggest a match
+                  </button>
+                  {review.elementId &&
+                    !['human_only', 'validation_error', 'page_changed'].includes(review.reason) && (
+                      <button
+                        className="secondary"
+                        disabled={working || chatting}
+                        onClick={() =>
+                          void perform(async () => {
+                            await controller.current?.run(true, review.elementId!);
+                          })
+                        }
+                      >
+                        Skip this field
+                      </button>
+                    )}
+                </div>
               </li>
             ))}
           </ul>
@@ -315,8 +375,8 @@ function App() {
         </section>
       )}
       <footer>
-        You review and move between pages. Binding, issuing, selling, consent and signatures stay
-        with you.
+        Ordinary Next/Continue can run after a clean page review. Binding, issuing, selling, consent
+        and signatures stay with you.
       </footer>
     </main>
   );

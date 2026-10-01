@@ -2,24 +2,37 @@
 
 ## Current POC baseline — September 30, 2026
 
+October 1 update: Dom approved PDF quote-sheet context and a tab-specific panel in ADR 0013.
+This supersedes the question-catalog input and screenshot-every-viewport requirements for
+the current PDF workflow; independent document verification and browser read-back remain.
+
 Dom approved the active-tab Astra approach in ADR 0005. This section supersedes conflicting
 bootstrap milestones and deterministic-first/remote-browser deliverables below. Smart-Mapper
 contains the POC extension and Azure backend; the live MIA-Chrome-Extension is a later integration
 target. The MIA web app work is on `smartmapper2.0` and this repository is on `Dom-astra-2.0approach`.
 
-The current page is observed through a screenshot and DOM control manifest. Azure Responses receives
-the selected quote's original questions, context, options and answers. One schema-validated action
+The current page is observed through a DOM control manifest and targeted screenshots after
+recognized sections are expanded. Azure Responses receives the selected quote's PDF sheet,
+including its printed questions, answers and entity context. Each schema-validated action
 is checked against source provenance and semantic equivalence, applied to the same active tab,
-and verified by normalized read-back. The human reviews, navigates, and explicitly resumes.
-Home and Auto question catalogs are implemented; unsupported metadata remains a review item.
+and verified by normalized read-back. ADR 0012 replaces the eight-field section limit with up to 48
+independent native entries across the page, then fresh inspection and repair. Ordinary
+same-origin Next/Continue may run automatically after a clean review, as Dom approved October 1.
+Missing facts, unclear navigation and final commitments stop for human review and explicit Resume.
+Home and Auto PDF generators supply context; missing document facts remain review items.
 
 The POC uses Dom's seeded demo account on live M.I.A. endpoints once configured. Repository privacy
 was confirmed by Dom. Azure resources are in `rg-mia-smartmap-prod`, East US, with US Data Zone
 Standard model processing. An authenticated public HTTPS backend and managed identity were approved.
-Carrier selection, separately authorized live test sessions, production retention and acceptance
-remain outstanding. The retained v1 worker and adapters are synthetic regression fixtures.
+Dom approved personally supervised testing across carrier websites on October 1. Local opt-in mode
+accepts HTTPS carrier origins and uses Chrome's active-tab permission; see ADR 0008.
+Unattended live test sessions, production retention and acceptance remain outstanding. The retained v1
+worker and adapters are synthetic regression fixtures.
 
 Use `docs/SMARTMAPPER_V2_SETUP.md` for the actual implementation and deployment steps.
+Dom also approved local testing through the existing Herd agency `https://admin.mia.test`.
+The same mapping backend can run on loopback with development-only memory checkpoints and Azure
+model calls; this does not require deploying M.I.A. to production. See ADR 0007.
 
 ## 1. Document control
 

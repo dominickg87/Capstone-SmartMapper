@@ -1,12 +1,35 @@
 import {
   AutomationActionV2Schema,
+  MAX_SECTION_ACTIONS,
   type AutomationActionV2,
+  type FactVerification,
+  type FactVerificationEntry,
   type JobBinding,
   type PageControl,
   type PageObservation,
   type SourceAnswer,
   type SourceAnswers,
+  type QuoteSheet,
 } from '@smartmapper/contracts';
+
+export function carrierOriginAllowed(
+  origin: string,
+  configured: ReadonlySet<string>,
+  allowAnyCarrier = false,
+): boolean {
+  try {
+    const url = new URL(origin);
+    if (url.origin !== origin || origin.length > 255) return false;
+    if (url.protocol === 'https:') return allowAnyCarrier || configured.has(origin);
+    return (
+      url.protocol === 'http:' &&
+      ['localhost', '127.0.0.1'].includes(url.hostname) &&
+      configured.has(origin)
+    );
+  } catch {
+    return false;
+  }
+}
 
 export const humanActionPattern =
   /\b(next|continue|submit|bind|issue|sell|purchase|buy|pay|payment|checkout|sign|signature|attest|agree|consent|accept|authorize|authorization|captcha|password|passcode|log\s*in|sign\s*in|verify identity|verification code|security code|one.time code)\b/i;
@@ -18,6 +41,41 @@ export function controlIsHumanOnly(
     control.humanOnly ||
     ['password', 'submit', 'file', 'image'].includes(control.inputType) ||
     humanActionPattern.test([control.label, ...control.context].join(' '))
+  );
+}
+
+export const ordinaryNextLabel = (label: string): boolean =>
+  /^(next|continue)(\s+(page|step))?\s*[>»→]?$/i.test(label.trim());
+export const commitmentPattern =
+  /\b(bind|issue|sell|purchase|pay|payment|sign|signature|attest|agree|consent|accept|authorize|authorization|certify|acknowledge)\b/i;
+
+export function pageReadyToAdvance(page: PageObservation): boolean {
+  return (
+    page.capture?.complete === true &&
+    page.capture.unexpanded === 0 &&
+    !page.headings.some((heading) => commitmentPattern.test(heading)) &&
+    !/\bby\s+(?:clicking|selecting|continuing|proceeding)\b[^.]{0,200}\b(?:agree|consent|authorize|certify|acknowledge|bind|issue|purchase|pay)\b/i.test(
+      page.pageText ?? '',
+    ) &&
+    !page.authenticationRequired &&
+    !page.errors.length &&
+    !page.omittedControls &&
+    !page.unsupportedFrames &&
+    page.controls.every((control) => {
+      if (control.disabled) return true;
+      if (control.errors.length) return false;
+      if (
+        control.humanOnly &&
+        ['checkbox', 'radio', 'text', 'textarea', 'file'].includes(control.inputType)
+      )
+        return ['checkbox', 'radio'].includes(control.inputType)
+          ? control.checked
+          : !!control.value;
+      if (!control.required) return true;
+      if (control.requiredSatisfied !== undefined) return control.requiredSatisfied;
+      if (['checkbox', 'radio'].includes(control.inputType)) return control.checked;
+      return !!control.value;
+    })
   );
 }
 
@@ -92,7 +150,19 @@ export function evaluateActiveTabAction(
   if (action.confidence < 0.95) return deny('low_confidence');
   const control = page.controls.find((item) => item.elementId === action.elementId);
   if (!['scroll', 'wait'].includes(action.type) && !control) return deny('control_missing');
-  if (control && (control.disabled || controlIsHumanOnly(control))) return deny('human_only');
+  if (action.type === 'next_page') {
+    if (
+      !control ||
+      control.disabled ||
+      !control.ordinaryNext ||
+      !ordinaryNextLabel(control.label) ||
+      commitmentPattern.test(control.context.join(' ')) ||
+      !pageReadyToAdvance(page) ||
+      action.sourceAnswerIds.length
+    )
+      return deny('navigation_not_ready');
+  } else if (control && (control.disabled || controlIsHumanOnly(control)))
+    return deny('human_only');
   const sources = action.sourceAnswerIds.map((answerId) =>
     source.answers.find((answer) => answer.answerId === answerId),
   );
@@ -148,11 +218,99 @@ export function evaluateActiveTabAction(
 }
 
 export interface FactVerifier {
+  verifySection(
+    entries: FactVerificationEntry[],
+    page: PageObservation,
+    document?: QuoteSheet,
+  ): Promise<FactVerification[]>;
   verify(
     action: AutomationActionV2,
     control: PageControl,
     sources: SourceAnswer[],
-  ): Promise<boolean>;
+    page: PageObservation,
+    document?: QuoteSheet,
+  ): Promise<FactVerification>;
+}
+
+// Multi-field plans require independent native entries covered by current page images.
+export function sectionActionsAllowed(
+  actions: AutomationActionV2[],
+  page: PageObservation,
+): boolean {
+  if (
+    actions.length <= 1 &&
+    (!page.capture || !actions.length || !['fill', 'select', 'check'].includes(actions[0]!.type))
+  )
+    return true;
+  if (
+    new Set(actions.map((action) => action.actionId)).size !== actions.length ||
+    new Set(actions.map((action) => action.elementId)).size !== actions.length
+  )
+    return false;
+  if (page.capture && page.coordinates === 'document' && page.images?.length) {
+    return actions.every((action) => {
+      const control = page.controls.find((item) => item.elementId === action.elementId);
+      return (
+        ['fill', 'select', 'check'].includes(action.type) &&
+        !!control &&
+        ((page.capture?.mode === 'targeted' && !!control.label.trim()) ||
+          page.images!.some(
+            (image) =>
+              control.rect.x >= image.x &&
+              control.rect.y >= image.y &&
+              control.rect.x + control.rect.width <= image.x + image.width &&
+              control.rect.y + control.rect.height <= image.y + image.height,
+          ))
+      );
+    });
+  }
+  if (actions.length > MAX_SECTION_ACTIONS) return false;
+  const section = page.controls.find(
+    (control) => control.elementId === actions[0]?.elementId,
+  )?.section;
+  return actions.every((action) => {
+    const control = page.controls.find((item) => item.elementId === action.elementId);
+    return (
+      ['fill', 'select', 'check'].includes(action.type) &&
+      !!control &&
+      !!page.viewport &&
+      control.section === section &&
+      control.rect.x >= (page.scroll?.x ?? 0) &&
+      control.rect.y >= (page.scroll?.y ?? 0) &&
+      control.rect.x + control.rect.width <= (page.scroll?.x ?? 0) + page.viewport.width &&
+      control.rect.y + control.rect.height <= (page.scroll?.y ?? 0) + page.viewport.height
+    );
+  });
+}
+
+export function unchangedAfterEntry(
+  before: PageObservation,
+  after: PageObservation,
+  elementId: string,
+): boolean {
+  const comparable = (page: PageObservation) => ({
+    documentId: page.documentId,
+    routeId: page.routeId,
+    origin: page.origin,
+    tabId: page.tabId,
+    title: page.title,
+    headings: page.headings,
+    errors: page.errors,
+    textFingerprint: page.textFingerprint,
+    authenticationRequired: page.authenticationRequired,
+    unsupportedFrames: page.unsupportedFrames,
+    omittedControls: page.omittedControls,
+    viewport: page.viewport,
+    controls: page.controls.map((control) =>
+      control.elementId === elementId
+        ? { ...control, value: '', checked: false, requiredSatisfied: true, errors: [] }
+        : control,
+    ),
+  });
+  return (
+    !after.authenticationRequired &&
+    JSON.stringify(comparable(before)) === JSON.stringify(comparable(after))
+  );
 }
 
 export function directRepresentationMatches(

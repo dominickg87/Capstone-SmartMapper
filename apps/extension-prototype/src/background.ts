@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { config } from './config.js';
 import { trustedStorage } from './session.js';
+import { installTabPanel } from './tab-panel.js';
 
 const pendingSchema = z.object({ tabId: z.number(), state: z.string(), expiresAt: z.number() });
 const connectionSchema = z.object({
@@ -18,7 +19,7 @@ async function handle(input: unknown, sender: chrome.runtime.MessageSender): Pro
   if (message.type === 'connect') {
     if (
       sender.id !== chrome.runtime.id ||
-      sender.url !== chrome.runtime.getURL('sidepanel.html') ||
+      sender.url?.split('?')[0] !== chrome.runtime.getURL('sidepanel.html') ||
       sender.tab
     )
       throw new Error('invalid_sender');
@@ -72,10 +73,7 @@ async function handle(input: unknown, sender: chrome.runtime.MessageSender): Pro
   });
 }
 
-void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
-chrome.action.onClicked.addListener((tab) => {
-  void chrome.sidePanel.open({ windowId: tab.windowId });
-});
+installTabPanel();
 void trustedStorage();
 let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {

@@ -1,21 +1,37 @@
 # M.I.A. SmartMapper
 
+Build **0.2.5** uses the selected M.I.A. Home/Auto **PDF quote sheet** as Astra context.
+It plans fields across the current page, checks document citations independently, fills in
+page order, and reads entries back. Clearly labeled fields use the DOM inventory; targeted
+screenshots supply missing visual context. A clean fully verified batch avoids another AI
+planning call. The panel opens only for the carrier tab activated with the toolbar icon.
+See [ADR 0013](docs/adr/0013-pdf-context-and-tab-panel.md).
+
 SmartMapper is the independent Chrome-extension POC on `Dom-astra-2.0approach`.
 M.I.A. integration code lives on `smartmapper2.0` in the sibling `MIA_web_app` repository.
 The live `MIA-Chrome-Extension` repository is not modified by this POC.
 
 The extension selects a M.I.A. quote and maps the **current active page**. The Azure backend
-uses the original question wording, section, entity, answer options and saved answers, together
-with a screenshot and structured DOM observation. It proposes one action at a time, independently
-checks that the source fact is preserved, and requires normalized browser read-back.
+uses the selected quote's PDF, together with structured DOM observations and targeted screenshots
+of the expanded page. It plans up to
+48 independent native fields across sections, checks each source fact in one verification request,
+and executes each entry with normalized browser read-back. Page changes invalidate remaining entries
+and trigger fresh inspection and repair.
 
-When the page is complete or needs help, the human reviews it, navigates, and presses **Resume mapping**.
-Submit, Bind, Issue, Sell, consent, signatures, payment and authentication remain human actions.
+After a clean page review, the local POC automatically uses recognized ordinary Next/Continue.
+Uncertain or incomplete pages stop for review and **Resume mapping**. Final submit, Bind, Issue,
+Sell, consent, signatures, payment and authentication remain human actions. See ADR 0012.
 
 **Talk to SmartMapper** accepts free-text questions and corrections during a job. Sending pauses
-mapping; the reply uses the current viewport screenshot and source Q&A. The latest ten exchanges
+mapping; the reply uses the current page images and PDF. The latest ten exchanges
 guide subsequent mapping after Resume, without changing source facts or permanently training the model.
 The side panel's **Connection details** provides the IDs needed for setup without developer tools.
+Review items offer **Suggest a match** and **Skip this field**. Suggestions explain PDF evidence;
+skipping preserves your carrier entry and continues other fields. Required-field checks still apply.
+
+Local development can run M.I.A. through Herd and the mapping backend on loopback while using the
+existing Azure model. Development-only memory checkpoints avoid cloud job storage; restarting the
+local backend ends those test jobs. See the local testing section in the setup guide.
 
 See [setup and deployment](docs/SMARTMAPPER_V2_SETUP.md), [architecture](docs/ARCHITECTURE.md),
 [decision ADR](docs/adr/0005-active-tab-astra-poc.md), and [test strategy](docs/TEST_STRATEGY.md).
@@ -57,8 +73,9 @@ For the old synthetic worker demo, run `pnpm dev:mock-carriers` and then
 
 ## Current limits
 
-The initial M.I.A. catalog covers extractable Auto and Home form questions. Unsupported form types,
-unresolved conditional questions and unrecognized fields require review. The catalog is checked
-against the current form source; it is not a historical record of wording shown when an older quote
-was created. Embedded frames, closed shadow roots and widgets without observable read-back need human input.
+The PDF source covers M.I.A. Home and Auto quote sheets. Anything omitted from the generated sheet,
+blank, N/A, conflicting or ambiguous requires review; the model cannot invent missing facts.
+The sheet uses the current document template, so it does not preserve historical question wording.
+Embedded frames, closed shadow roots and widgets without observable read-back need human input.
+Direct PDF context reduces extraction work, but latency still depends on model planning and verification.
 Cloud deployment and authorized carrier acceptance testing are separate from the local checks.

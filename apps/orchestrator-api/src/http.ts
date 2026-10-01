@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createRequire } from 'node:module';
 import { ZodError } from 'zod';
 import { ApiError, type ActiveTabJobService } from './active-tab-service.js';
 import { ConflictError } from './checkpoints.js';
+
+const { version: buildVersion } = createRequire(import.meta.url)('../package.json') as {
+  version: string;
+};
 
 function send(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, {
@@ -22,7 +27,7 @@ async function body(request: IncomingMessage): Promise<unknown> {
     const chunk: unknown = part;
     if (!(chunk instanceof Uint8Array)) throw new ApiError(400, 'invalid_body');
     bytes += chunk.byteLength;
-    if (bytes > 10_000_000) throw new ApiError(413, 'request_too_large');
+    if (bytes > 30_000_000) throw new ApiError(413, 'request_too_large');
     parts.push(Buffer.from(chunk));
   }
   try {
@@ -40,7 +45,7 @@ export function createApi(
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const url = new URL(request.url ?? '/', 'http://localhost');
     if (url.pathname === '/health' && request.method === 'GET') {
-      send(response, 200, { status: 'ok', version: '2.0' });
+      send(response, 200, { status: 'ok', version: '2.0', buildVersion });
       return;
     }
     const origin = request.headers.origin;

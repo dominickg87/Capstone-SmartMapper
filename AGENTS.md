@@ -14,6 +14,8 @@ ADR 0005 is the current POC baseline. Implement active-tab v2 in this repository
 MIA web app branch. Do not edit the live MIA-Chrome-Extension repository. The v1 remote worker is a
 synthetic regression harness, not a current cloud-runtime deliverable. Model-assisted representation
 changes are permitted with source IDs, independent equivalence checks and browser read-back.
+ADR 0013 adds PDF quote-sheet context for the current POC. Document citations are untrusted
+until independently checked against the original PDF; the catalog flow remains a regression path.
 
 - Keep one shared automation core with ExtensionExecutor and RemoteBrowserExecutor adapters.
 - Keep carrier adapters independent from execution environments.
@@ -32,8 +34,9 @@ changes are permitted with source IDs, independent equivalence checks and browse
   screenshots containing PII.
 - Never access a live carrier site without a separately approved task, written authorization, and
   designated test account.
-- Never add automatic submit, bind, purchase, attestation, legal-consent, signature, CAPTCHA-solving,
-  MFA-bypass, access-control bypass, or anti-bot bypass behavior.
+- Never add automatic final submit, bind, issue, sell, purchase, attestation, legal-consent, signature,
+  CAPTCHA-solving, MFA-bypass, access-control bypass, or anti-bot bypass behavior. Dom approved ordinary
+  Next/Continue after a clean whole-page review on October 1, 2026; apply ADR 0012's navigation checks.
 - Never infer a material underwriting fact missing from source data.
 - Missing, conflicting, unsupported, high-risk, or low-confidence answers become review items.
 - Never broaden extension host permissions beyond approved development origins without review.
@@ -72,6 +75,14 @@ relevant browser tests. Do not weaken TypeScript, lint, schemas, policies, or as
 check pass.
 
 ## Pull requests and done criteria
+
+Dom requires an incremented version for every delivered application update so he can verify the
+loaded build. Before handing off a code or runtime-configuration change, bump the patch version in
+each affected app's package.json (extension-prototype and/or orchestrator-api), then rebuild/reload
+or restart as applicable. The extension manifest derives its version from its package.json; the
+side panel displays the loaded manifest version. The backend reports its package version as
+buildVersion in /health. State the delivered version in the handoff. Do not change the 2.0 protocol
+schema version merely to identify a build, and do not reuse a version for changed delivered code.
 
 Use small branches named feat/..., fix/..., docs/..., or spike/.... Reference an issue, explain the
 safety impact, and obtain at least one review. Update documentation and add an ADR for cross-cutting

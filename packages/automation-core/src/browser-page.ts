@@ -9,8 +9,12 @@ import {
   actionExpectedValue,
   canonicalValue,
   controlIsHumanOnly,
+  humanActionPattern,
+  ordinaryNextLabel,
+  commitmentPattern,
   evaluateActiveTabAction,
   valueDigest,
+  unchangedAfterEntry,
 } from './active-tab.js';
 
 const clean = (value: string | null | undefined, limit = 2000): string =>
@@ -39,6 +43,9 @@ function label(element: HTMLElement): string {
             .map((item) => item.textContent)
             .join(' ')
         : element.textContent) ||
+      (element instanceof HTMLInputElement && ['button', 'submit'].includes(element.type)
+        ? element.value
+        : '') ||
       element.getAttribute('placeholder') ||
       element.getAttribute('title'),
   );
@@ -51,6 +58,97 @@ export class BrowserPageSession {
   private readonly completed = new Set<string>();
   private overlay: HTMLElement | null = null;
   private omittedControls = 0;
+  private unexpanded = 0;
+
+  public async prepareSurvey(tabId: number): Promise<PageObservation> {
+    this.clearMarkers();
+    const before = await this.observe(tabId);
+    if (before.authenticationRequired || document.visibilityState !== 'visible') return before;
+    // Open genuine disclosure controls, never arbitrary buttons or answer choices.
+    for (let i = 0; i < 30; i++) {
+      const details = Array.from(document.querySelectorAll('details:not([open])')).find(
+        (element) =>
+          visible(element) &&
+          !element.closest('[data-smartmapper-human-only],[inert]') &&
+          !humanActionPattern.test(element.querySelector('summary')?.textContent ?? ''),
+      );
+      if (details instanceof HTMLDetailsElement) {
+        details.open = true;
+        continue;
+      }
+      const disclosure = Array.from(
+        document.querySelectorAll('button[type="button"][aria-expanded="false"][aria-controls]'),
+      ).find(
+        (element) =>
+          visible(element) &&
+          !element.matches(':disabled,[aria-disabled="true"]') &&
+          !element.closest('[data-smartmapper-human-only],[inert]') &&
+          !humanActionPattern.test(label(element)) &&
+          !!document.getElementById(element.getAttribute('aria-controls') ?? ''),
+      );
+      if (!(disclosure instanceof HTMLButtonElement)) break;
+      disclosure.click();
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      if (disclosure.getAttribute('aria-expanded') !== 'true') break;
+    }
+    this.unexpanded = Array.from(
+      document.querySelectorAll('details:not([open]),button[aria-expanded="false"][aria-controls]'),
+    ).filter(visible).length;
+    return this.surveyPosition(tabId, 0, 0);
+  }
+
+  public async surveyPosition(tabId: number, x: number, y: number): Promise<PageObservation> {
+    if (document.visibilityState !== 'visible') throw new Error('tab_hidden');
+    this.clearMarkers();
+    window.scrollTo({ left: x, top: y, behavior: 'instant' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return this.observe(tabId, true);
+  }
+
+  public async finishSurvey(
+    tabId: number,
+    complete: boolean,
+    targeted = false,
+  ): Promise<PageObservation> {
+    const page = await this.surveyPosition(tabId, 0, 0);
+    page.capture = {
+      complete,
+      unexpanded: this.unexpanded,
+      ...(targeted ? { mode: 'targeted' as const } : {}),
+    };
+    this.clearMarkers();
+    this.last = page;
+    return page;
+  }
+
+  private nextElementAllowed(element: HTMLElement): boolean {
+    if (!ordinaryNextLabel(label(element)) || element.closest('[data-smartmapper-human-only]'))
+      return false;
+    if (commitmentPattern.test(fromIds(element, 'aria-describedby'))) return false;
+    if (element instanceof HTMLAnchorElement)
+      return (
+        !!element.getAttribute('href') &&
+        !element.download &&
+        (!element.target || element.target === '_self') &&
+        new URL(element.href, location.href).origin === location.origin &&
+        !element.href.startsWith('javascript:')
+      );
+    if (
+      !(element instanceof HTMLButtonElement || element instanceof HTMLInputElement) ||
+      !['button', 'submit'].includes(element.type)
+    )
+      return false;
+    if (
+      element.form &&
+      ((element.form.target && element.form.target !== '_self') ||
+        new URL(
+          element.getAttribute('formaction') || element.form.action || location.href,
+          location.href,
+        ).origin !== location.origin)
+    )
+      return false;
+    return !element.formTarget || element.formTarget === '_self';
+  }
 
   public clearMarkers(): void {
     this.overlay?.remove();
@@ -60,10 +158,13 @@ export class BrowserPageSession {
   private controls(): PageControl[] {
     const candidates = Array.from(
       document.querySelectorAll(
-        'input,textarea,select,button,[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="tab"],[role="button"]',
+        'input,textarea,select,button,a,[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="tab"],[role="button"]',
       ),
     )
       .filter(visible)
+      .filter(
+        (element) => !(element instanceof HTMLAnchorElement) || ordinaryNextLabel(label(element)),
+      )
       .filter((element) => !this.overlay?.contains(element));
     this.elements.clear();
     this.omittedControls =
@@ -135,15 +236,17 @@ export class BrowserPageSession {
             ? element.checked
             : element.getAttribute('aria-checked') === 'true',
         required: native ? element.required : element.getAttribute('aria-required') === 'true',
+        requiredSatisfied: native ? !element.validity.valueMissing : undefined,
         disabled:
           element.matches(':disabled,[aria-disabled="true"],[readonly]') ||
           element.closest('[inert]') !== null,
         humanOnly:
           element instanceof HTMLAnchorElement ||
           !!element.closest('[data-smartmapper-human-only]'),
+        ordinaryNext: this.nextElementAllowed(element),
         options: options.slice(0, 300),
         errors,
-        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        rect: { x: rect.x + scrollX, y: rect.y + scrollY, width: rect.width, height: rect.height },
       };
       control.humanOnly = controlIsHumanOnly(control);
       return control;
@@ -153,18 +256,20 @@ export class BrowserPageSession {
   public async observe(tabId: number, markers = false): Promise<PageObservation> {
     this.clearMarkers();
     const controls = this.controls();
-    for (const control of controls) {
-      const element = this.elements.get(control.elementId);
-      control.key = await valueDigest(
-        [
-          control.section,
-          control.label,
-          element?.getAttribute('name') ?? '',
-          element?.id ?? '',
-          control.elementId,
-        ].join('|'),
-      );
-    }
+    await Promise.all(
+      controls.map(async (control) => {
+        const element = this.elements.get(control.elementId);
+        control.key = await valueDigest(
+          [
+            control.section,
+            control.label,
+            element?.getAttribute('name') ?? '',
+            element?.id ?? '',
+            control.elementId,
+          ].join('|'),
+        );
+      }),
+    );
     const authenticationRequired =
       controls.some((control) => control.inputType === 'password') ||
       !!document.querySelector(
@@ -173,22 +278,24 @@ export class BrowserPageSession {
       /\b(sign in|log in|verify your identity|multi.factor authentication)\b/i.test(
         clean(document.querySelector('h1')?.textContent),
       );
+    const textFingerprint = await valueDigest(clean(document.body.innerText, 200_000));
     const page: PageObservation = {
       version: '2.0',
       tabId,
       origin: location.origin,
       pageStateId: crypto.randomUUID(),
       documentId: this.documentId,
-      routeId: await valueDigest(location.pathname + location.hash),
+      routeId: await valueDigest(location.pathname + location.search + location.hash),
+      textFingerprint,
       fingerprint: await valueDigest(
         JSON.stringify({
           controls,
-          scrollX,
-          scrollY,
+          textFingerprint,
           height: document.documentElement.scrollHeight,
         }),
       ),
       title: clean(document.title),
+      pageText: clean(document.body.innerText, 40_000),
       headings: Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"]'))
         .filter(visible)
         .map((element) => clean(element.textContent))
@@ -203,6 +310,14 @@ export class BrowserPageSession {
       unsupportedFrames: Array.from(document.querySelectorAll('iframe')).filter(visible).length,
       omittedControls: this.omittedControls,
       capturedAt: new Date().toISOString(),
+      viewport: { width: innerWidth, height: innerHeight },
+      coordinates: 'document',
+      scroll: {
+        x: scrollX,
+        y: scrollY,
+        width: Math.max(innerWidth, document.documentElement.scrollWidth),
+        height: Math.max(innerHeight, document.documentElement.scrollHeight),
+      },
       screenshot: null,
     };
     this.last = page;
@@ -210,10 +325,10 @@ export class BrowserPageSession {
       const overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647;';
       for (const control of controls) {
-        if (control.rect.y < 0 || control.rect.y > innerHeight) continue;
+        if (control.rect.y < scrollY || control.rect.y > scrollY + innerHeight) continue;
         const marker = document.createElement('span');
         marker.textContent = control.elementId;
-        marker.style.cssText = `position:absolute;left:${Math.max(0, control.rect.x)}px;top:${Math.max(0, control.rect.y)}px;background:#102b63;color:white;font:10px monospace;padding:1px 3px;`;
+        marker.style.cssText = `position:absolute;left:${Math.max(0, control.rect.x - scrollX)}px;top:${Math.max(0, control.rect.y - scrollY)}px;background:#102b63;color:white;font:10px monospace;padding:1px 3px;`;
         overlay.append(marker);
       }
       document.documentElement.append(overlay);
@@ -240,9 +355,11 @@ export class BrowserPageSession {
     )
       return fail('page_changed');
     const current = await this.observe(previous.tabId);
+    const originalElements = new Map(this.elements);
     if (previous.fingerprint !== current.fingerprint || previous.routeId !== current.routeId)
       return fail('page_changed');
     current.pageStateId = previous.pageStateId;
+    if (previous.capture) current.capture = previous.capture;
     const policy = evaluateActiveTabAction(action, current, {
       version: '2.0',
       tenantId: 'local',
@@ -290,11 +407,59 @@ export class BrowserPageSession {
       };
     }
     try {
+      if (action.type === 'next_page') {
+        if (
+          !element ||
+          !this.nextElementAllowed(element) ||
+          ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement) &&
+            element.form &&
+            !element.form.checkValidity())
+        )
+          return fail('policy_blocked');
+        this.last = null;
+        // A document navigation destroys this message channel. Acknowledge dispatch, then
+        // let the extension verify that a new page actually appears before mapping again.
+        const navigate = async () => {
+          if (document.visibilityState !== 'visible' || !element.isConnected) return;
+          const fresh = await this.observe(previous.tabId);
+          fresh.pageStateId = current.pageStateId;
+          if (current.capture) fresh.capture = current.capture;
+          if (
+            fresh.fingerprint !== current.fingerprint ||
+            !this.nextElementAllowed(element) ||
+            ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement) &&
+              element.form &&
+              !element.form.checkValidity())
+          )
+            return;
+          const finalPolicy = evaluateActiveTabAction(action, fresh, {
+            version: '2.0',
+            tenantId: 'local',
+            userId: 'local',
+            quoteId: 'local',
+            formType: 'local',
+            revision: 'local',
+            answers: [],
+            unavailablePaths: [],
+          });
+          this.last = null;
+          if (finalPolicy.allowed) element.click();
+        };
+        setTimeout(() => {
+          void navigate().catch(() => undefined);
+        }, 50);
+        return {
+          actionId: action.actionId,
+          status: 'executed',
+          reason: 'applied',
+          observedHash: null,
+        };
+      }
       if (
         action.type === 'fill' &&
         (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
       ) {
-        element.focus();
+        element.focus({ preventScroll: true });
         const prototype =
           element instanceof HTMLInputElement
             ? HTMLInputElement.prototype
@@ -326,7 +491,7 @@ export class BrowserPageSession {
       await new Promise((resolve) => setTimeout(resolve, 300));
       if (
         location.origin !== current.origin ||
-        (await valueDigest(location.pathname + location.hash)) !== current.routeId
+        (await valueDigest(location.pathname + location.search + location.hash)) !== current.routeId
       )
         return fail('page_changed');
       if (expected === null)
@@ -348,6 +513,19 @@ export class BrowserPageSession {
         observed !== null &&
         canonicalValue(observed) === canonicalValue(expected) &&
         !invalid;
+      // Carry the original plan forward only across the expected value change. Any layout,
+      // label, option, other answer, node replacement or navigation invalidates the remainder.
+      if (matches && action.elementId && ['fill', 'select', 'check'].includes(action.type)) {
+        const next = await this.observe(previous.tabId);
+        const sameElements =
+          originalElements.size === this.elements.size &&
+          [...originalElements].every(([id, original]) => this.elements.get(id) === original);
+        if (sameElements && unchangedAfterEntry(current, next, action.elementId)) {
+          next.pageStateId = previous.pageStateId;
+          if (previous.capture) next.capture = previous.capture;
+          this.last = next;
+        } else this.last = null;
+      } else this.last = null;
       return {
         actionId: action.actionId,
         status: matches ? 'verified' : 'failed',

@@ -1,5 +1,11 @@
 # Current decisions — September 30, 2026
 
+- October 1, build 0.2.5: Dom approved sending the M.I.A. PDF quote sheet directly to Astra,
+  targeted page images, page batches and local completion checks; see ADR 0013. This replaces
+  catalog-derived source questions for PDF jobs. PDF citations, independent document verification,
+  source authorization and browser read-back remain required. The side panel belongs only to
+  the tab activated with the toolbar icon; activating another tab disables the old panel.
+
 - Dom confirmed that the repository is private. Earlier public-visibility observations below are historical.
 - Development branches: Smart-Mapper `Dom-astra-2.0approach`; MIA web app `smartmapper2.0`.
 - Smart-Mapper is the POC extension repository. Leave the live MIA-Chrome-Extension implementation alone.
@@ -8,10 +14,38 @@
 - Demo data is seeded mock data in a live production M.I.A. demo account. Runtime access is limited
   to explicitly configured tenant/user/origin allowlists. Exact identifiers are deployment inputs.
 - Dom confirmed the demo tenant origin as `https://demo.mia.agency` on October 1, 2026.
-  The local POC extension build is configured for it; internal tenant/user IDs remain deployment inputs.
+  The POC extension was initially configured for it; internal tenant/user IDs remain deployment inputs.
+- Dom requested local testing on October 1, 2026 and confirmed `https://admin.mia.test` as the
+  local agency. The current unpacked build now targets this local M.I.A. site and the loopback backend.
+  The local backend uses development-only memory checkpoints and the existing Azure model.
+  The deployed Azure app retains its demo-account configuration. Production extension SmartMapper
+  is currently deactivated, per Dom; this does not change the new backend's access checks.
+- On October 1, Dom approved personally supervised live-carrier testing, initially supplying
+  `https://www.alliedtrustagents.com/Quote/Quote.aspx`. He then explicitly requested testing on any
+  carrier page he navigates to. The local POC now accepts HTTPS carrier origins without per-site
+  setup, using Chrome's active-tab permission after Dom clicks the toolbar icon. This standing
+  approval covers Dom operating the logged-in tab; it does not cover unattended agent access.
+  Keep grant/tab binding and human-only final actions. See ADR 0008; do not re-request per-carrier approval.
 - Include original question wording, section/entity context and options with each source answer.
-- Stop after each page. The human reviews, navigates and presses Resume mapping.
-- Bind, Issue, Sell, submit, payments, consent, signatures and authentication remain human-only.
+- On October 1, Dom requested incremented versions on every delivered update so he can identify
+  the loaded build. Display the extension version in the side panel and expose the backend build
+  version in /health. Follow the version-bump rule in AGENTS.md.
+- The original stop/review/manual navigation rule is superseded for ordinary Next/Continue by
+  Dom's October 1 approval below. Final actions still require the human.
+- On October 1, Dom requested section-level filling to reduce per-field AI delays. Plan and verify
+  up to eight independent visible fields together, retaining per-field policy/read-back and manual
+  page navigation. Build 0.2.2 implements this under ADR 0010.
+- Dom requested a further 10x speed improvement on October 1, then chose to keep Astra and test
+  the optimized build before considering another model. Build 0.2.3 uses compact model messages
+  and local low reasoning (max escalation); existing cloud settings remain unchanged. The first
+  synthetic eight-field comparison improved AI time from 26.5s to 12.9s, not 10x. See ADR 0011.
+- Dom then requested whole-page inspection, expanded sections and page screenshots, a whole-page
+  fill plan, and a fresh inspection/repair pass. He explicitly answered "Automatically use ordinary
+  Next/Continue" to replace manual page navigation. Build 0.2.4 implements ADR 0012: up to 48
+  independently supported native entries per plan, bounded image coverage, automatic reinspection
+  after reveals, and guarded same-origin Next/Continue after a clean review. Unsupported/missing
+  facts still need human input. Astra and the current local/cloud boundary are unchanged.
+- Bind, Issue, Sell, final submit, payments, consent, signatures and authentication remain human-only.
 - See ADR 0005 and `docs/SMARTMAPPER_V2_SETUP.md`. The worksheet below is retained as historical
   context; do not reopen decisions explicitly settled here.
 

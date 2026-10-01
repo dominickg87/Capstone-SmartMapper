@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
+import packageJson from './package.json' with { type: 'json' };
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), 'VITE_'), ...process.env };
@@ -23,9 +24,21 @@ export default defineConfig(({ mode }) => {
   )
     .split(',')
     .map((item) => origin(item.trim()));
+  const anyCarrierSetting = env.VITE_SMARTMAPPER_ALLOW_ANY_CARRIER ?? 'false';
+  if (!['true', 'false'].includes(anyCarrierSetting))
+    throw new Error('Expected true or false for VITE_SMARTMAPPER_ALLOW_ANY_CARRIER');
+  const allowAnyCarrier = anyCarrierSetting === 'true';
+  const sourceFormat = env.VITE_SMARTMAPPER_SOURCE_FORMAT ?? 'pdf';
+  if (!['pdf', 'questions'].includes(sourceFormat)) throw new Error('Invalid source format');
   return {
     define: {
-      __SMARTMAPPER_CONFIG__: JSON.stringify({ backendOrigin, miaOrigin, carrierOrigins }),
+      __SMARTMAPPER_CONFIG__: JSON.stringify({
+        backendOrigin,
+        miaOrigin,
+        carrierOrigins,
+        allowAnyCarrier,
+        sourceFormat,
+      }),
     },
     plugins: [
       react(),
@@ -39,14 +52,18 @@ export default defineConfig(({ mode }) => {
               {
                 manifest_version: 3,
                 name: 'M.I.A. SmartMapper POC',
-                version: '0.2.0',
+                version: packageJson.version,
                 minimum_chrome_version: '116',
                 description:
-                  'Map a selected M.I.A. quote into the active page, with human review between pages.',
+                  'Map a selected M.I.A. quote across pages, with source checks and human review.',
                 permissions: ['activeTab', 'storage', 'scripting', 'sidePanel'],
-                host_permissions: [...new Set([backendOrigin, miaOrigin, ...carrierOrigins])].map(
-                  (item) => item + '/*',
-                ),
+                host_permissions: [
+                  ...new Set([
+                    backendOrigin,
+                    miaOrigin,
+                    ...(allowAnyCarrier ? [] : carrierOrigins),
+                  ]),
+                ].map((item) => item + '/*'),
                 background: { service_worker: 'background.js', type: 'module' },
                 action: { default_title: 'Open SmartMapper' },
                 side_panel: { default_path: 'sidepanel.html' },

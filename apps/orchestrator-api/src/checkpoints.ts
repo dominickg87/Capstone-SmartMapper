@@ -2,12 +2,24 @@ import { DefaultAzureCredential } from '@azure/identity';
 import { odata, TableClient } from '@azure/data-tables';
 import type { ActionReceipt, JobView } from '@smartmapper/contracts';
 
+export interface PendingAction {
+  batchId: string;
+  actionId: string;
+  key: string;
+  expectedHash: string | null;
+  sourceAnswerIds: string[];
+  transformation: string;
+  transformationHash: string;
+  navigation?: boolean;
+}
+
 export interface Checkpoint {
   view: JobView;
   tokenHash: string;
   miaOrigin: string;
   sourceToken: string;
   sourceRevision: string;
+  sourceFormat?: 'pdf';
   page: { documentId: string; routeId: string } | null;
   attempts: Record<string, number>;
   verifiedControls: string[];
@@ -26,16 +38,16 @@ export interface Checkpoint {
   actionCount: number;
   lastFingerprint: string;
   unchangedCount: number;
-  pending: {
-    batchId: string;
-    actionId: string;
-    key: string;
-    expectedHash: string | null;
-    sourceAnswerIds: string[];
-    transformation: string;
-    transformationHash: string;
-  } | null;
+  pending: PendingAction | null;
+  queued?: PendingAction[];
   lastBatchId: string | null;
+  wholePage?: boolean;
+  reobserve?: boolean;
+  expectedNavigation?: boolean;
+  completedPages?: number;
+  pagePasses?: number;
+  plannedShape?: string;
+  skippedControls?: { key: string; shape: string }[];
 }
 
 export interface StoredCheckpoint {

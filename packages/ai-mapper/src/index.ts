@@ -11,6 +11,7 @@ import {
 import { z } from 'zod';
 
 export * from './astra.js';
+export { documentSources } from './quote-sheet.js';
 
 export const FieldSchemaMetadataSchema = z
   .object({

@@ -7,6 +7,13 @@ const origin = z
   .url()
   .refine((value) => new URL(value).origin === value, 'Expected an origin');
 const scalar = z.union([z.string().max(8000), z.number().finite(), z.boolean()]);
+const screenshot = z
+  .string()
+  .max(8_000_000)
+  .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/);
+export const MAX_PAGE_ACTIONS = 48;
+export const MAX_PAGE_IMAGES = 12;
+export const MAX_SURVEY_BYTES = 20_000_000;
 
 export const SourceAnswerSchema = z
   .object({
@@ -21,9 +28,43 @@ export const SourceAnswerSchema = z
     value: scalar.nullable(),
     status: z.enum(['answered', 'missing', 'conflicting', 'human_only']),
     dataType: z.enum(['text', 'date', 'number', 'boolean', 'enum']),
+    documentEvidence: z
+      .object({
+        digest: z.string().regex(/^[a-f0-9]{64}$/),
+        page: z.number().int().min(1).max(200),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type SourceAnswer = z.infer<typeof SourceAnswerSchema>;
+
+export const QuoteSheetSchema = z
+  .object({
+    tenantId: id,
+    userId: id,
+    quoteId: id,
+    revision: id,
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    data: z
+      .string()
+      .min(8)
+      .max(20_000_000)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/),
+  })
+  .strict();
+export type QuoteSheet = z.infer<typeof QuoteSheetSchema>;
+
+// Model-extracted citations are proposals, not facts, until independently checked against the PDF.
+export const DocumentAnswerSchema = z
+  .object({
+    answerId: id,
+    page: z.number().int().min(1).max(200),
+    question: z.string().min(1).max(4000),
+    entity: shortText,
+    value: z.string().min(1).max(8000),
+  })
+  .strict();
 
 export const SourceAnswersSchema = z
   .object({
@@ -33,6 +74,7 @@ export const SourceAnswersSchema = z
     quoteId: id,
     formType: id,
     revision: id,
+    sourceFormat: z.literal('pdf').optional(),
     answers: z.array(SourceAnswerSchema).max(2000),
     unavailablePaths: z.array(id).max(2000),
   })
@@ -57,8 +99,10 @@ export const PageControlSchema = z
     value: z.string().max(8000),
     checked: z.boolean(),
     required: z.boolean(),
+    requiredSatisfied: z.boolean().optional(),
     disabled: z.boolean(),
     humanOnly: z.boolean(),
+    ordinaryNext: z.boolean().optional(),
     options: z.array(z.object({ value: z.string().max(2000), label: shortText }).strict()).max(300),
     errors: z.array(shortText).max(20),
     rect: z
@@ -77,7 +121,12 @@ export const PageObservationSchema = z
     documentId: id,
     routeId: id,
     fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    textFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     title: shortText,
+    pageText: z.string().max(40_000).optional(),
     headings: z.array(shortText).max(30),
     controls: z.array(PageControlSchema).max(400),
     errors: z.array(shortText).max(30),
@@ -85,13 +134,52 @@ export const PageObservationSchema = z
     unsupportedFrames: z.number().int().nonnegative(),
     omittedControls: z.number().int().nonnegative(),
     capturedAt: z.iso.datetime(),
-    screenshot: z
-      .string()
-      .max(8_000_000)
-      .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/)
-      .nullable(),
+    viewport: z
+      .object({ width: z.number().positive(), height: z.number().positive() })
+      .strict()
+      .optional(),
+    coordinates: z.literal('document').optional(),
+    scroll: z
+      .object({
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        width: z.number().positive(),
+        height: z.number().positive(),
+      })
+      .strict()
+      .optional(),
+    capture: z
+      .object({
+        complete: z.boolean(),
+        unexpanded: z.number().int().nonnegative(),
+        mode: z.literal('targeted').optional(),
+      })
+      .strict()
+      .optional(),
+    images: z
+      .array(
+        z
+          .object({
+            screenshot,
+            x: z.number().nonnegative(),
+            y: z.number().nonnegative(),
+            width: z.number().positive(),
+            height: z.number().positive(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(MAX_PAGE_IMAGES)
+      .optional(),
+    screenshot: screenshot.nullable(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (page) =>
+      !page.images ||
+      page.images.reduce((total, image) => total + image.screenshot.length, 0) <= MAX_SURVEY_BYTES,
+    'Page images exceed the survey limit',
+  );
 export type PageObservation = z.infer<typeof PageObservationSchema>;
 
 // One bounded representation, shared by the provider, server policy and executor.
@@ -100,7 +188,7 @@ export const AutomationActionV2Schema = z
   .object({
     version: z.literal('2.0'),
     actionId: id,
-    type: z.enum(['fill', 'select', 'check', 'click', 'key', 'scroll', 'wait']),
+    type: z.enum(['fill', 'select', 'check', 'click', 'key', 'scroll', 'wait', 'next_page']),
     pageStateId: id,
     elementId: id.nullable(),
     sourceAnswerIds: z.array(id).max(10),
@@ -143,13 +231,30 @@ export const FieldReviewSchema = z
   .strict();
 export type FieldReview = z.infer<typeof FieldReviewSchema>;
 
+export type FactVerification =
+  | { approved: true }
+  | {
+      approved: false;
+      reason: 'missing_question_context' | 'ambiguous_match' | 'source_mismatch';
+    };
+
+export interface FactVerificationEntry {
+  action: AutomationActionV2;
+  control: PageControl;
+  sources: SourceAnswer[];
+}
+
+// Legacy clients without a full-page survey still have the eight-field viewport limit.
+export const MAX_SECTION_ACTIONS = 8;
+
 export const SmartMapperPlanSchema = z
   .object({
     version: z.literal('2.0'),
     pageStateId: id,
     outcome: z.enum(['act', 'page_complete', 'human_input', 'blocked']),
-    actions: z.array(AutomationActionV2Schema).max(1),
+    actions: z.array(AutomationActionV2Schema).max(MAX_PAGE_ACTIONS),
     reviews: z.array(FieldReviewSchema).max(100),
+    documentAnswers: z.array(DocumentAnswerSchema).max(200).optional(),
   })
   .strict();
 export type SmartMapperPlan = z.infer<typeof SmartMapperPlanSchema>;
@@ -201,6 +306,7 @@ export type RedeemedGrant = z.infer<typeof RedeemedGrantSchema>;
 
 export const StartJobSchema = z
   .object({
+    sourceFormat: z.literal('pdf').optional(),
     miaOrigin: origin,
     code: z.string().min(32).max(256),
     verifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
@@ -245,6 +351,7 @@ export const ObserveRequestSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     resume: z.boolean(),
+    skipElementId: id.optional(),
     observation: PageObservationSchema,
     conversation: MappingConversationSchema.default([]),
   })
@@ -302,21 +409,28 @@ export const ObserveResponseSchema = z
   .object({
     job: JobViewSchema,
     batch: ActionBatchSchema.nullable(),
+    followingBatches: z
+      .array(ActionBatchSchema)
+      .max(MAX_PAGE_ACTIONS - 1)
+      .optional(),
   })
   .strict();
 export type ObserveResponse = z.infer<typeof ObserveResponseSchema>;
 
 export interface SmartMapperObservation {
   page: PageObservation;
+  document?: QuoteSheet;
   source: SourceAnswers;
   attempts: Record<string, number>;
   recentResults: ActionReceipt[];
   verifiedControls: string[];
+  skippedElementIds?: string[];
   conversation?: MappingChatMessage[];
 }
 
 export interface MappingChatContext {
   page: PageObservation;
+  document?: QuoteSheet;
   source: SourceAnswers;
   conversation: MappingChatMessage[];
   recentResults: ActionReceipt[];

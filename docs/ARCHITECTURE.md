@@ -15,22 +15,29 @@ sequenceDiagram
     MIA-->>Extension: One-use quote/tab/origin grant
     Extension->>API: Grant + verifier
     API->>MIA: Redeem and authorize
-    MIA-->>API: Original questions + answers + expiring source capability
+    MIA-->>API: PDF metadata + expiring source capability
     API->>Table: Scoped checkpoint + token hash
-    loop Current page only
-        Extension->>API: Screenshot + controls + revision
-        API->>MIA: Reauthorize and retrieve current source
-        API->>Model: Plan one action with source provenance
-        API->>Model: Independently check proposed fact equivalence
+    API->>MIA: Fetch scoped PDF while browser inspection starts
+    MIA-->>API: PDF + revision + content digest
+    loop Current page, repairs, and authorized next pages
+        Extension->>Extension: Expand recognized sections, inventory DOM, capture targeted images
+        Extension->>API: Images with offsets + page inventory + revision
+        API->>MIA: Reauthorize and check PDF source revision
+        API->>Model: PDF + page, plan up to 48 independent fields
+        API->>Model: Original PDF + independent citation and entry verification
         API->>Table: Conditional revision update
-        API-->>Extension: Approved action + relevant source answers
-        Extension->>Extension: Check tab/DOM, apply, read back
-        Extension->>API: Receipt + observed value hash
-        API->>Table: Verify hash and checkpoint progress
+        API-->>Extension: Approved entries + relevant source answers
+        loop Each entry, while page and job remain valid
+            Extension->>Extension: Check tab/DOM, apply, read back
+            Extension->>API: Receipt + observed value hash
+            API->>Table: Verify hash, advance expected action and checkpoint
+        end
+        Extension->>API: Fresh page inspection for repair or completion
+        API->>API: Complete unchanged fully verified page, otherwise replan
+        API-->>Extension: Ordinary Next only after clean review and navigation checks
     end
-    Extension-->>Human: Review this page
-    Human->>Human: Review / Next or Continue
-    Human->>Extension: Resume mapping
+    Extension-->>Human: Review uncertainty or perform final action
+    Human->>Extension: Resume after intervention
 ```
 
 `AiMapperProvider` isolates Azure SDK calls. Shared v2 schemas and policy live in packages; the DOM
@@ -38,12 +45,25 @@ observer/executor has no Chrome dependency. Chrome orchestration and trusted ses
 live in the extension; long-running planning and progress live outside the MV3 worker.
 
 Azure Table ETags and monotonic job revisions prevent concurrent observations, replay and late
-responses after Pause. Raw answer bundles, screenshots and action values are transient; checkpoints
+responses after Pause. PDFs, raw answer bundles, screenshots and action values are transient; checkpoints
 hold scope, counters, hashes, bounded provenance events and an expiring source capability.
-Every source fetch rechecks M.I.A. authorization. No caller-supplied URL can redirect a source token.
+Every observation/chat rechecks M.I.A. authorization and revision before using a cached PDF.
+The cache holds at most 20 PDFs for five minutes or grant expiry, with cancellation eviction.
+No caller-supplied URL can redirect a source token.
+ADR 0010 batches model work for independent fields; ordered browser execution and receipts remain
+per field. The remainder is invalidated when the page changes, read-back fails or the user pauses.
+ADR 0011 reduces provider message overhead with request-local source aliases and compact typed
+actions. The provider restores original source IDs and the full versioned action contract before
+server policy evaluation. Both independent visual verification and per-field browser checks remain.
 
-There is no automatic page-navigation action in v2. Native controls and a narrow custom-widget
-allowlist are supported. Uninspectable frames/shadow controls and truncated pages require review.
+ADR 0012 adds whole-page planning and automatic repair after changed controls. ADR 0013 replaces
+the source catalog with PDF input and captures only the viewports needed for visual context.
+Independent PDF verification remains separate from the planner; fully verified unchanged pages
+can complete without another planning call. Ordinary
+Next/Continue is an opt-in backend-generated action after clean page review; the model cannot emit
+navigation. The browser rechecks the target, binding and form before clicking, and the extension
+confirms a changed page before continuing. Final commitments stay human-only. Native controls and a
+narrow custom-widget allowlist are supported. Uninspectable frames/shadow controls and truncated pages require review.
 Read `SMARTMAPPER_V2_SETUP.md` for configuration and limitations. The sections below describe the
 retained v1 synthetic harness; ADR 0005 supersedes conflicting runtime assumptions.
 
