@@ -10,6 +10,11 @@ into an assumption.
 
 ## Architectural invariants
 
+ADR 0005 is the current POC baseline. Implement active-tab v2 in this repository and the approved
+MIA web app branch. Do not edit the live MIA-Chrome-Extension repository. The v1 remote worker is a
+synthetic regression harness, not a current cloud-runtime deliverable. Model-assisted representation
+changes are permitted with source IDs, independent equivalence checks and browser read-back.
+
 - Keep one shared automation core with ExtensionExecutor and RemoteBrowserExecutor adapters.
 - Keep carrier adapters independent from execution environments.
 - Keep provider-specific AI code behind AiMapperProvider.

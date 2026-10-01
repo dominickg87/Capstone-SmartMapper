@@ -1,5 +1,30 @@
 # Test strategy
 
+## Active-tab v2 checks
+
+Build before running tests so injected workspace packages and the unpacked extension are current.
+V2 unit tests cover strict action policy, prohibited paths, provenance, identity transformations,
+tab/origin binding, source revocation/change, ETag conflicts, pause during inference, receipt
+idempotency, independent equivalence rejection, HTTP authorization and Azure request options.
+Chat checks cover paused-state/revision requirements, source revocation and scope, invalid roles,
+strict replies without actions, cancellation during inference, checkpoint redaction, forwarding
+guidance on Resume, and rejection of forbidden actions or invented facts despite human chat.
+
+The unpacked-extension browser tests use Chromium's extension action to grant actual activeTab
+permission, capture a screenshot, run a scripted model through the real local service, enter and
+read back fields, stop at a page boundary, and resume after manual navigation. Separate executor
+checks cover native options, unverified custom options, stale DOM/human edits and Issue-policy
+blocks. Every test asserts that the final synthetic submit control was not activated.
+The side-panel test also checks visible connection IDs, free-text chat with a viewport screenshot,
+conversation survival after panel reload, clearing guidance, and sending a message while a mapping
+proposal is in flight. The interrupted proposal must never enter the field.
+
+In the MIA web app, run `php artisan test --compact tests/Feature/SmartMapperV2Test.php tests/Feature/ExtensionApiTest.php`.
+Those tests exercise original wording/context, false/zero/repeated records, unavailable metadata,
+quote ownership, demo scope, grant verifier/replay/expiry, cancellation and token revocation.
+Cloud RBAC, Azure Table persistence, live model behavior and real carrier acceptance remain separate
+deployment checks; local passing tests do not claim those integrations were exercised.
+
 ## Test pyramid
 
 Unit tests cover schemas, action policy, confidence gates, transitions, source paths, transforms,

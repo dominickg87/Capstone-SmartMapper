@@ -1,7 +1,24 @@
-# BLOCKING — repository ownership and privacy
+# Current decisions — September 30, 2026
+
+- Dom confirmed that the repository is private. Earlier public-visibility observations below are historical.
+- Development branches: Smart-Mapper `Dom-astra-2.0approach`; MIA web app `smartmapper2.0`.
+- Smart-Mapper is the POC extension repository. Leave the live MIA-Chrome-Extension implementation alone.
+- Use the existing `rg-mia-smartmap-prod` resources in East US, US Data Zone model processing,
+  a separate public HTTPS App Service, and managed identity. No private-network provisioning is needed.
+- Demo data is seeded mock data in a live production M.I.A. demo account. Runtime access is limited
+  to explicitly configured tenant/user/origin allowlists. Exact identifiers are deployment inputs.
+- Dom confirmed the demo tenant origin as `https://demo.mia.agency` on October 1, 2026.
+  The local POC extension build is configured for it; internal tenant/user IDs remain deployment inputs.
+- Include original question wording, section/entity context and options with each source answer.
+- Stop after each page. The human reviews, navigates and presses Resume mapping.
+- Bind, Issue, Sell, submit, payments, consent, signatures and authentication remain human-only.
+- See ADR 0005 and `docs/SMARTMAPPER_V2_SETUP.md`. The worksheet below is retained as historical
+  context; do not reopen decisions explicitly settled here.
+
+# Historical bootstrap worksheet — repository ownership and privacy
 
 - [ ] Transfer dominickg87/Capstone-SmartMapper to the M.I.A. GitHub organization.
-- [ ] Make the repository private and verify only approved collaborators can access it.
+- [x] Repository is private, confirmed by Dom; collaborator administration remains with Dom.
 - [ ] Keep the generic bootstrap commit local until privacy is confirmed or Dom explicitly approves
       pushing the reviewed generic files while public.
 

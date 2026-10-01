@@ -2,8 +2,13 @@ packages:
   - apps/*
   - packages/*
 
+injectWorkspacePackages: true
+syncInjectedDepsAfterScripts:
+  - build
+
 allowBuilds:
   esbuild: true
+  protobufjs: true
 
 overrides:
   node-releases: 2.0.53

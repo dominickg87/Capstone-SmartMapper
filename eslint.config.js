@@ -11,6 +11,8 @@ export default tseslint.config(
       '**/test-results/**',
       '**/playwright-report/**',
       '.tools/**',
+      '.pnpm-store/**',
+      '**/dist-types/**',
       'node_modules/**',
     ],
   },

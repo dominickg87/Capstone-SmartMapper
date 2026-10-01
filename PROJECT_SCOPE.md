@@ -1,5 +1,26 @@
 # M.I.A. SmartMapper — Project Scope and Working Charter
 
+## Current POC baseline — September 30, 2026
+
+Dom approved the active-tab Astra approach in ADR 0005. This section supersedes conflicting
+bootstrap milestones and deterministic-first/remote-browser deliverables below. Smart-Mapper
+contains the POC extension and Azure backend; the live MIA-Chrome-Extension is a later integration
+target. The MIA web app work is on `smartmapper2.0` and this repository is on `Dom-astra-2.0approach`.
+
+The current page is observed through a screenshot and DOM control manifest. Azure Responses receives
+the selected quote's original questions, context, options and answers. One schema-validated action
+is checked against source provenance and semantic equivalence, applied to the same active tab,
+and verified by normalized read-back. The human reviews, navigates, and explicitly resumes.
+Home and Auto question catalogs are implemented; unsupported metadata remains a review item.
+
+The POC uses Dom's seeded demo account on live M.I.A. endpoints once configured. Repository privacy
+was confirmed by Dom. Azure resources are in `rg-mia-smartmap-prod`, East US, with US Data Zone
+Standard model processing. An authenticated public HTTPS backend and managed identity were approved.
+Carrier selection, separately authorized live test sessions, production retention and acceptance
+remain outstanding. The retained v1 worker and adapters are synthetic regression fixtures.
+
+Use `docs/SMARTMAPPER_V2_SETUP.md` for the actual implementation and deployment steps.
+
 ## 1. Document control
 
 | Field           | Value                                                                                                              |

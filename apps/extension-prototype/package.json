@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.content.config.ts",
     "dev": "vite"
   },
   "dependencies": {
+    "@smartmapper/automation-core": "workspace:*",
     "@smartmapper/carrier-adapters": "workspace:*",
     "@smartmapper/contracts": "workspace:*",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "zod": "^4.6.5"
   }
 }

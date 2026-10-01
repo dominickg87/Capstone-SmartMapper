@@ -3,7 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
+    "./active-tab": {
+      "types": "./dist/active-tab.d.ts",
+      "default": "./dist/active-tab.js"
+    },
+    "./browser-page": {
+      "types": "./dist/browser-page.d.ts",
+      "default": "./dist/browser-page.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

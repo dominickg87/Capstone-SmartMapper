@@ -1,5 +1,19 @@
 # Prioritized backlog
 
+## Current active-tab POC
+
+Implemented locally: original-question catalog and M.I.A. scoped grants, managed-identity Azure
+Responses/Table adapters, v2 job API, shared action policy and read-back, POC side panel and
+active-tab loop, synthetic contract/unit/browser tests, packaging and deployment instructions.
+
+Remaining integration steps: configure the actual demo agency origin and tenant/user scope;
+publish reviewed M.I.A. and Azure builds; verify cloud RBAC/model/table connections; run a separately
+authorized carrier acceptance session; measure field coverage and review rate. Fold validated
+findings into the live Chrome extension only after the POC.
+
+The bootstrap milestones below are historical. Repository privacy and the Azure hosting/model
+choices were settled by Dom on September 30, 2026. Remote browser delivery is deferred by ADR 0005.
+
 Dependencies marked Dom block real integration but not generic mock/core work.
 
 ## Milestone 0 — repository safety and team start

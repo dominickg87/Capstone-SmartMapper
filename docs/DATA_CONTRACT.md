@@ -1,5 +1,33 @@
 # Data contract
 
+## Active-tab v2
+
+`packages/contracts/src/smartmapper.ts` is the current POC wire contract. All objects reject unknown
+keys. Source answers carry stable answer/question IDs, source paths, original question text, section,
+entity, context, choices, status and value. Unavailable question metadata is reported separately.
+
+Observations contain an ephemeral screenshot, visible control metadata/values, a document ID,
+route hash, DOM fingerprint and capture time. Uninspected/truncated content prevents a clean completion.
+Actions bind to one observation and element ID, with source IDs, confidence and transformation.
+They can fill/select/check, narrowly click, close a widget with Escape, scroll or wait. Other key
+variants in the schema remain policy-blocked. Next/Continue and final transactions have no approved action.
+
+Receipts report status/reason and a normalized observed-value hash. Server-issued batches and
+revision numbers make replay and concurrent responses detectable. Persisted provenance retains
+source IDs/revision, target key, transformation kind/explanation hash, expected/read-back hashes
+and outcome; no raw source or target value is written to job storage.
+
+`POST /v2/jobs/:id/chat` requires the job bearer token, a paused job, its current revision, a fresh
+bound screenshot/observation, and an alternating user/assistant conversation ending in a user message.
+Roles are limited to `user` and `assistant`, with at most 20 messages and 4,000 characters per message.
+The strict reply contains only `version: "2.0"` and `reply`; no browser action is accepted through chat.
+Chat advances the revision while remaining paused and rejects replies superseded by pause/cancel/resume.
+Source authorization, ownership and revision are rechecked before discussion. Observe requests can
+include the bounded conversation as fallible guidance; action authorization is unchanged. Chat text
+is kept only in the extension's in-memory job session, not in server checkpoints. See ADR 0006.
+
+The following v1 contract is retained only for the synthetic worker/adapters and their regressions.
+
 The canonical version is 1.0 and is implemented with strict Zod schemas in packages/contracts.
 Unknown keys are rejected at external boundaries. Contract changes require compatibility tests and,
 when cross-cutting, an ADR.

@@ -1,0 +1,79 @@
+{
+  "source": {
+    "version": "2.0",
+    "tenantId": "demo",
+    "userId": "7",
+    "quoteId": "quote-synthetic",
+    "formType": "auto",
+    "revision": "revision-1",
+    "answers": [
+      {
+        "answerId": "first-name",
+        "questionId": "applicant-first-name",
+        "sourcePath": "applicant1.firstName",
+        "question": "First Name",
+        "section": "Applicant",
+        "entity": "Applicant 1",
+        "context": [],
+        "options": [],
+        "value": "Alex",
+        "status": "answered",
+        "dataType": "text"
+      }
+    ],
+    "unavailablePaths": []
+  },
+  "page": {
+    "version": "2.0",
+    "tabId": 42,
+    "origin": "http://127.0.0.1:4173",
+    "pageStateId": "page-1",
+    "documentId": "doc-1",
+    "routeId": "route-1",
+    "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "title": "Synthetic carrier",
+    "headings": ["Applicant"],
+    "controls": [
+      {
+        "elementId": "e0",
+        "key": "first-name",
+        "tag": "input",
+        "inputType": "text",
+        "role": "textbox",
+        "label": "First Name",
+        "section": "Applicant",
+        "context": [],
+        "value": "",
+        "checked": false,
+        "required": true,
+        "disabled": false,
+        "humanOnly": false,
+        "options": [],
+        "errors": [],
+        "rect": { "x": 10, "y": 10, "width": 200, "height": 30 }
+      }
+    ],
+    "errors": [],
+    "authenticationRequired": false,
+    "unsupportedFrames": 0,
+    "omittedControls": 0,
+    "capturedAt": "2026-09-30T12:00:00.000Z",
+    "screenshot": "data:image/png;base64,AAAA"
+  },
+  "action": {
+    "version": "2.0",
+    "actionId": "action-1",
+    "type": "fill",
+    "pageStateId": "page-1",
+    "elementId": "e0",
+    "sourceAnswerIds": ["first-name"],
+    "value": "Alex",
+    "checked": null,
+    "key": null,
+    "purpose": null,
+    "direction": null,
+    "milliseconds": null,
+    "transformation": { "kind": "identity", "explanation": "The applicant's supplied first name." },
+    "confidence": 0.99
+  }
+}

@@ -22,6 +22,8 @@
     "paths": {
       "@smartmapper/contracts": ["packages/contracts/src/index.ts"],
       "@smartmapper/automation-core": ["packages/automation-core/src/index.ts"],
+      "@smartmapper/automation-core/active-tab": ["packages/automation-core/src/active-tab.ts"],
+      "@smartmapper/automation-core/browser-page": ["packages/automation-core/src/browser-page.ts"],
       "@smartmapper/carrier-adapters": ["packages/carrier-adapters/src/index.ts"],
       "@smartmapper/mia-client": ["packages/mia-client/src/index.ts"],
       "@smartmapper/ai-mapper": ["packages/ai-mapper/src/index.ts"],

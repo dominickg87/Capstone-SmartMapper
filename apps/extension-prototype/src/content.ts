@@ -1,46 +1,40 @@
-import type { ExtensionMessage, ExtensionResponse, PageDetection } from './messages.js';
+import { BrowserPageSession } from '@smartmapper/automation-core/browser-page';
+import { ActionBatchSchema } from '@smartmapper/contracts';
+import { z } from 'zod';
 
-function detectPage(): PageDetection {
-  const allowedHosts = new Set(['localhost:4173', '127.0.0.1:4173']);
-  if (!allowedHosts.has(window.location.host)) {
-    return {
-      supported: false,
-      pagePath: window.location.pathname,
-      reason: 'Only the localhost mock carrier is allowed.',
-    };
+declare global {
+  interface Window {
+    smartMapperContentV2?: boolean;
   }
-
-  const adapterId =
-    window.location.pathname === '/modern'
-      ? 'mock-modern'
-      : window.location.pathname === '/classic'
-        ? 'mock-classic'
-        : undefined;
-
-  if (!adapterId) {
-    return {
-      supported: false,
-      pagePath: window.location.pathname,
-      reason: 'No mock adapter recognizes this page.',
-    };
-  }
-
-  return {
-    supported: true,
-    adapterId,
-    pagePath: window.location.pathname,
-    reason: 'Recognized from the localhost path and semantic mock page.',
-  };
 }
-
-chrome.runtime.onMessage.addListener(
-  (
-    message: ExtensionMessage,
-    _sender: chrome.runtime.MessageSender,
-    sendResponse: (response: ExtensionResponse) => void,
-  ) => {
-    if (message.type === 'detect-page') {
-      sendResponse({ detection: detectPage() });
+if (!window.smartMapperContentV2) {
+  window.smartMapperContentV2 = true;
+  const session = new BrowserPageSession();
+  const messageSchema = z.discriminatedUnion('type', [
+    z.object({ type: z.literal('observe'), tabId: z.number().int().nonnegative() }).strict(),
+    z.object({ type: z.literal('execute'), batch: ActionBatchSchema }).strict(),
+    z.object({ type: z.literal('clear-markers') }).strict(),
+  ]);
+  chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
+    if (
+      sender.id !== chrome.runtime.id ||
+      !sender.url?.startsWith(chrome.runtime.getURL('')) ||
+      sender.tab
+    )
+      return false;
+    const parsed = messageSchema.safeParse(message);
+    if (!parsed.success) return false;
+    const command = parsed.data;
+    if (command.type === 'clear-markers') {
+      session.clearMarkers();
+      respond({ ok: true });
+      return false;
     }
-  },
-);
+    const operation =
+      command.type === 'observe'
+        ? session.observe(command.tabId, true)
+        : session.execute(command.batch);
+    void operation.then(respond).catch(() => respond({ error: 'page_operation_failed' }));
+    return true;
+  });
+}

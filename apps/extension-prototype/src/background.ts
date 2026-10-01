@@ -1,108 +1,95 @@
-import {
-  initialRunState,
-  parseExtensionResponse,
-  type ExtensionMessage,
-  type ExtensionResponse,
-  type PersistedRunState,
-} from './messages.js';
+import { z } from 'zod';
+import { config } from './config.js';
+import { trustedStorage } from './session.js';
 
-const storageKey = 'smartmapperRunStateV1';
+const pendingSchema = z.object({ tabId: z.number(), state: z.string(), expiresAt: z.number() });
+const connectionSchema = z.object({
+  access_token: z.string().regex(/^mia_ext_[A-Za-z0-9]+$/),
+  expires_at: z.string().datetime({ offset: true }),
+});
+const messageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('connect') }).strict(),
+  z.object({ type: z.literal('connection-result'), payload: connectionSchema }).strict(),
+]);
 
-async function readState(): Promise<PersistedRunState> {
-  const stored = await chrome.storage.local.get(storageKey);
-  return (stored[storageKey] as PersistedRunState | undefined) ?? initialRunState;
+async function handle(input: unknown, sender: chrome.runtime.MessageSender): Promise<void> {
+  const message = messageSchema.parse(input);
+  await trustedStorage();
+  if (message.type === 'connect') {
+    if (
+      sender.id !== chrome.runtime.id ||
+      sender.url !== chrome.runtime.getURL('sidepanel.html') ||
+      sender.tab
+    )
+      throw new Error('invalid_sender');
+    const state = crypto.randomUUID();
+    const tab = await chrome.tabs.create({ url: 'about:blank', active: true });
+    if (tab.id === undefined) throw new Error('tab_missing');
+    await chrome.storage.session.set({
+      connection: { tabId: tab.id, state, expiresAt: Date.now() + 15 * 60_000 },
+    });
+    await chrome.tabs.update(tab.id, {
+      url: config.miaOrigin + '/extension/connect?extension_state=' + state,
+    });
+    return;
+  }
+  const stored: Record<string, unknown> = await chrome.storage.session.get('connection');
+  const pending = pendingSchema.parse(stored.connection);
+  const url = new URL(sender.url ?? 'about:blank');
+  if (
+    sender.id !== chrome.runtime.id ||
+    sender.frameId !== 0 ||
+    sender.tab?.id !== pending.tabId ||
+    sender.origin !== config.miaOrigin ||
+    url.origin !== config.miaOrigin ||
+    url.pathname !== '/extension/connect' ||
+    url.searchParams.get('extension_state') !== pending.state ||
+    pending.expiresAt <= Date.now() ||
+    Date.parse(message.payload.expires_at) <= Date.now()
+  )
+    throw new Error('invalid_connection');
+  const response = await fetch(config.miaOrigin + '/api/extension/me', {
+    headers: {
+      authorization: 'Bearer ' + message.payload.access_token,
+      accept: 'application/json',
+    },
+    redirect: 'error',
+    credentials: 'omit',
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error('connection_rejected');
+  const profile = z
+    .object({
+      user: z.object({ id: z.union([z.string(), z.number()]) }),
+      tenant: z.object({ id: z.string() }),
+    })
+    .parse(await response.json());
+  await chrome.storage.session.remove('connection');
+  await chrome.storage.session.set({
+    miaToken: message.payload.access_token,
+    principal: profile.tenant.id + '/' + profile.user.id,
+  });
 }
 
-async function writeState(state: PersistedRunState): Promise<void> {
-  await chrome.storage.local.set({ [storageKey]: state });
-}
-
-async function activeTab(): Promise<chrome.tabs.Tab | undefined> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab;
-}
-
-async function detectActivePage(): Promise<ExtensionResponse> {
-  const tab = await activeTab();
-  if (!tab?.id) {
-    return { error: 'No active tab is available.' };
-  }
-
-  try {
-    const detection: unknown = await chrome.tabs.sendMessage(tab.id, {
-      type: 'detect-page',
-    } satisfies ExtensionMessage);
-    return parseExtensionResponse(detection);
-  } catch {
-    return { error: 'Open a localhost mock carrier page before starting.' };
-  }
-}
-
-async function updateStatus(
-  status: PersistedRunState['status'],
-  progressMessage: string,
-): Promise<PersistedRunState> {
-  const current = await readState();
-  const state: PersistedRunState = {
-    ...current,
-    status,
-    progress: [...current.progress, progressMessage].slice(-12),
-    updatedAt: new Date().toISOString(),
-  };
-  await writeState(state);
-  return state;
-}
-
-async function handleMessage(message: ExtensionMessage): Promise<ExtensionResponse> {
-  if (message.type === 'detect-page') {
-    return detectActivePage();
-  }
-  if (message.type === 'get-state') {
-    return { state: await readState() };
-  }
-  if (message.type === 'start-run') {
-    const tab = await activeTab();
-    const detectionResponse = await detectActivePage();
-    if (!detectionResponse.detection?.supported || !tab?.id) {
-      return detectionResponse.error
-        ? detectionResponse
-        : { error: detectionResponse.detection?.reason ?? 'Unsupported page.' };
-    }
-
-    /*
-     * Production authentication and short-lived quote retrieval will be injected
-     * here through an approved backend boundary. Payloads must not be persisted
-     * in extension storage; this prototype stores only a synthetic reference.
-     */
-    const state: PersistedRunState = {
-      version: '1.0',
-      status: 'running',
-      quoteReference: message.quoteReference,
-      activeTabId: tab.id,
-      progress: ['Page recognized', 'Synthetic quote selected', 'Run started'],
-      reviewItems: [],
-      updatedAt: new Date().toISOString(),
-    };
-    await writeState(state);
-    return { state, detection: detectionResponse.detection };
-  }
-  if (message.type === 'pause-run') {
-    return { state: await updateStatus('paused', 'Run paused by user') };
-  }
-  if (message.type === 'resume-run') {
-    return { state: await updateStatus('running', 'Run resumed from persisted state') };
-  }
-
-  return { state: await updateStatus('cancelled', 'Run cancelled; transient data discarded') };
-}
-
-chrome.runtime.onMessage.addListener(
-  (
-    message: ExtensionMessage,
-    _sender: chrome.runtime.MessageSender,
-    sendResponse: (response: ExtensionResponse) => void,
-  ) => {
-    void handleMessage(message).then(sendResponse);
-    return true;
-  },
-);
+void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+chrome.action.onClicked.addListener((tab) => {
+  void chrome.sidePanel.open({ windowId: tab.windowId });
+});
+void trustedStorage();
+let queue = Promise.resolve();
+chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
+  if (sender.id !== chrome.runtime.id) return false;
+  queue = queue
+    .then(() => handle(message, sender))
+    .then(() => {
+      respond({ ok: true });
+    })
+    .catch(() => {
+      respond({
+        ok: false,
+        error: 'Connection failed. Start sign-in from the SmartMapper panel again.',
+      });
+    });
+  return true;
+});

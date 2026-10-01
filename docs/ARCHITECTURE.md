@@ -1,5 +1,52 @@
 # Architecture
 
+## Active-tab v2 — current implementation
+
+```mermaid
+sequenceDiagram
+    participant Human
+    participant Extension as POC extension
+    participant MIA as M.I.A. web app
+    participant API as Azure SmartMapper API
+    participant Model as Azure Responses
+    participant Table as Azure Table
+    Human->>Extension: Select quote / Start
+    Extension->>MIA: Existing login token + verifier challenge
+    MIA-->>Extension: One-use quote/tab/origin grant
+    Extension->>API: Grant + verifier
+    API->>MIA: Redeem and authorize
+    MIA-->>API: Original questions + answers + expiring source capability
+    API->>Table: Scoped checkpoint + token hash
+    loop Current page only
+        Extension->>API: Screenshot + controls + revision
+        API->>MIA: Reauthorize and retrieve current source
+        API->>Model: Plan one action with source provenance
+        API->>Model: Independently check proposed fact equivalence
+        API->>Table: Conditional revision update
+        API-->>Extension: Approved action + relevant source answers
+        Extension->>Extension: Check tab/DOM, apply, read back
+        Extension->>API: Receipt + observed value hash
+        API->>Table: Verify hash and checkpoint progress
+    end
+    Extension-->>Human: Review this page
+    Human->>Human: Review / Next or Continue
+    Human->>Extension: Resume mapping
+```
+
+`AiMapperProvider` isolates Azure SDK calls. Shared v2 schemas and policy live in packages; the DOM
+observer/executor has no Chrome dependency. Chrome orchestration and trusted session credentials
+live in the extension; long-running planning and progress live outside the MV3 worker.
+
+Azure Table ETags and monotonic job revisions prevent concurrent observations, replay and late
+responses after Pause. Raw answer bundles, screenshots and action values are transient; checkpoints
+hold scope, counters, hashes, bounded provenance events and an expiring source capability.
+Every source fetch rechecks M.I.A. authorization. No caller-supplied URL can redirect a source token.
+
+There is no automatic page-navigation action in v2. Native controls and a narrow custom-widget
+allowlist are supported. Uninspectable frames/shadow controls and truncated pages require review.
+Read `SMARTMAPPER_V2_SETUP.md` for configuration and limitations. The sections below describe the
+retained v1 synthetic harness; ADR 0005 supersedes conflicting runtime assumptions.
+
 ## System shape
 
 SmartMapper is one policy-controlled mapping system with two executor adapters:

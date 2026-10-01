@@ -5,8 +5,12 @@ import {
   SourcePathSchema,
   type CarrierPageSnapshot,
   type FieldMappingCandidate,
+  type MappingChatContext,
+  type MappingChatReply,
 } from '@smartmapper/contracts';
 import { z } from 'zod';
+
+export * from './astra.js';
 
 export const FieldSchemaMetadataSchema = z
   .object({
@@ -47,9 +51,10 @@ export const MappingProposalSchema = z
   .strict();
 export type MappingProposal = z.infer<typeof MappingProposalSchema>;
 
-export interface AiMapperProvider {
+export interface AiMapperProvider<Request = SanitizedMappingRequest, Proposal = MappingProposal> {
   readonly providerId: string;
-  proposeMappings(request: SanitizedMappingRequest): Promise<MappingProposal>;
+  proposeMappings(request: Request): Promise<Proposal>;
+  discussMapping?(request: MappingChatContext): Promise<MappingChatReply>;
 }
 
 function normalizedTokens(value: string): string[] {

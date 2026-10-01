@@ -7,5 +7,9 @@
     "tsBuildInfoFile": "../test-results/e2e.tsbuildinfo"
   },
   "include": ["e2e/**/*.ts"],
-  "references": [{ "path": "../apps/automation-worker" }, { "path": "../packages/mia-client" }]
+  "references": [
+    { "path": "../apps/automation-worker" },
+    { "path": "../packages/mia-client" },
+    { "path": "../apps/orchestrator-api" }
+  ]
 }

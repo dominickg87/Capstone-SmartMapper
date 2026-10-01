@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/.tsbuildinfo"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -13,7 +18,9 @@
     "build": "tsc -b"
   },
   "dependencies": {
+    "@azure/identity": "^4.13.3",
     "@smartmapper/contracts": "workspace:*",
+    "openai": "^7.25.0",
     "zod": "^4.1.5"
   }
 }

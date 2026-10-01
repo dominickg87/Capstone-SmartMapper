@@ -1,5 +1,41 @@
 # Security and privacy design
 
+## Active-tab v2 data flow
+
+ADR 0005 supersedes the v1 metadata-only AI input and remote-worker assumptions below. V2 sends
+the selected quote's Q&A and an active-tab screenshot to the configured US Data Zone deployment,
+using Responses with `store:false`. Both remain in request memory. Ordinary logs and telemetry
+contain status/counts; durable checkpoints contain hashes, scope IDs, bounded provenance and a
+one-hour M.I.A. source capability. Storage RBAC protects that capability as a credential.
+
+M.I.A.'s long-lived extension token stays in trusted extension session storage. Quote grants are
+one-use, verifier-bound and expire after two minutes. Sources recheck ownership, revocation,
+subscription and demo allowlists. Job bearer credentials bind tenant/user/quote/carrier/tab and
+expire within one hour. Exact origins are allowlisted; redirects carrying credentials are rejected.
+CORS rejects unapproved supplied origins; job authentication is still required when Chrome omits
+the Origin header on a GET. CORS is not the authorization boundary.
+
+Schema validation precedes policy. Page text/model output cannot grant authority. A second model
+call checks fact preservation but is fallible: deterministic source binding, identity checks,
+native-control constraints, DOM checks, receipt hashes and human review remain necessary.
+No final transaction, navigation, consent, authentication or Enter-key action is available.
+
+ADR 0006 adds human conversation as fallible mapping guidance, never as authority to change source
+facts or bypass policy. Chat replies cannot contain executable actions. The latest ten exchanges
+are stored in trusted Chrome session memory with the job and may contain user-entered/source values;
+they are not a redacted audit log. They are sent to the model with `store:false` and excluded from
+Azure checkpoints and default telemetry. Clearing chat, cancellation or ending the browser session
+removes them; expired jobs are cleared when detected. Chat does not permanently train the model.
+
+The extension stops on tab/origin/DOM changes. It requests only configured hosts and activeTab;
+it does not require browser-wide host permissions. The POC is disabled for unconfigured accounts.
+Tests use synthetic profiles, screenshots and data. The existing M.I.A. connection flow revokes
+older tokens for the same account when it issues a new extension connection.
+
+Expiry denies access immediately. Physical Azure deletion runs every five minutes while the app
+is running; M.I.A. prunes expired grant metadata on later grant issuance in that tenant. Review the
+operational retention limitations in `SMARTMAPPER_V2_SETUP.md` before production integration.
+
 ## Threats and controls
 
 | Threat                      | Primary controls                                                                    |
