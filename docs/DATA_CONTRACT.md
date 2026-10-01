@@ -26,6 +26,14 @@ Source authorization, ownership and revision are rechecked before discussion. Ob
 include the bounded conversation as fallible guidance; action authorization is unchanged. Chat text
 is kept only in the extension's in-memory job session, not in server checkpoints. See ADR 0006.
 
+Mapping memory (proposed ADR 0007, `packages/contracts/src/mapping-memory.ts`) adds a position-
+independent `signature` to each page control, `origin` (`model` or `memory`) to action batches, and
+`remembered`/`candidates` to the job view. `POST /v2/jobs/:id/mappings` takes the current revision,
+the candidate IDs the human approved and memory-filled batch IDs the human corrected. It is refused
+while planning or executing. Saved `LearnedMapping` rows contain the signature, question IDs, action
+type, an allowlisted recipe, value digests for option/check choices, and counters, with no answer
+values, labels or option text.
+
 The following v1 contract is retained only for the synthetic worker/adapters and their regressions.
 
 The canonical version is 1.0 and is implemented with strict Zod schemas in packages/contracts.

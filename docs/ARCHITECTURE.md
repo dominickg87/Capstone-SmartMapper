@@ -47,6 +47,11 @@ allowlist are supported. Uninspectable frames/shadow controls and truncated page
 Read `SMARTMAPPER_V2_SETUP.md` for configuration and limitations. The sections below describe the
 retained v1 synthetic harness; ADR 0005 supersedes conflicting runtime assumptions.
 
+Proposed ADR 0007 adds optional human-approved mapping memory in front of the model. On each
+observation the backend replays approved mappings for untouched controls first, through the same
+policy, fact check and read-back, and calls the model only when memory has nothing left to do. Verified
+model entries become candidates that the human can approve in the side panel when finishing a job.
+
 ## System shape
 
 SmartMapper is one policy-controlled mapping system with two executor adapters:

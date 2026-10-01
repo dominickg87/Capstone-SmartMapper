@@ -1,6 +1,30 @@
 import { DefaultAzureCredential } from '@azure/identity';
 import { odata, TableClient } from '@azure/data-tables';
-import type { ActionReceipt, JobView } from '@smartmapper/contracts';
+import type {
+  ActionReceipt,
+  JobView,
+  MappingActionType,
+  MappingRecipe,
+} from '@smartmapper/contracts';
+
+// How a pending or verified entry relates to mapping memory. Digests and IDs only.
+export type MemoryLink =
+  | { origin: 'memory'; signature: string; actionType: MappingActionType }
+  | {
+      origin: 'model';
+      signature: string;
+      actionType: MappingActionType;
+      questionIds: string[];
+      recipe: MappingRecipe;
+    };
+
+// A verified entry kept for the end-of-job review. `page` hashes the document and route so the
+// entry is rechecked while that page is still observed.
+export type WatchedEntry = MemoryLink & {
+  candidateId: string;
+  page: string;
+  observedHash: string;
+};
 
 export interface Checkpoint {
   view: JobView;
@@ -34,8 +58,12 @@ export interface Checkpoint {
     sourceAnswerIds: string[];
     transformation: string;
     transformationHash: string;
+    memory?: MemoryLink;
   } | null;
   lastBatchId: string | null;
+  // Optional so checkpoints written before mapping memory still load.
+  watched?: WatchedEntry[];
+  memorySkip?: string[];
 }
 
 export interface StoredCheckpoint {

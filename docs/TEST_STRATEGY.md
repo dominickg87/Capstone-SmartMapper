@@ -19,6 +19,13 @@ The side-panel test also checks visible connection IDs, free-text chat with a vi
 conversation survival after panel reload, clearing guidance, and sending a message while a mapping
 proposal is in flight. The interrupted proposal must never enter the field.
 
+Mapping-memory checks (proposed ADR 0007) cover recipe derivation and refusal (ambiguous dates,
+extraction, repeated entities, human-only and custom controls), replay, never overwriting a different
+value, option merging, failure limits, approval conflicts, user isolation, storage failure, dropped
+candidates after a change, and corrections. The two-run browser test approves mappings after a
+model run, blocks a field the human edited, and asserts that the second run fills approved fields
+without asking the model and never clicks the final submit control.
+
 In the MIA web app, run `php artisan test --compact tests/Feature/SmartMapperV2Test.php tests/Feature/ExtensionApiTest.php`.
 Those tests exercise original wording/context, false/zero/repeated records, unavailable metadata,
 quote ownership, demo scope, grant verifier/replay/expiry, cancellation and token revocation.

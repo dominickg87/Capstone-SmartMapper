@@ -2,9 +2,18 @@ import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { JobView, MappingChatMessage } from '@smartmapper/contracts';
 import { ExtensionExecutor, type QuoteChoice } from './controller.js';
+import { mappingReview, type MappingReviewItem } from './mapping-review.js';
 import { connectionDetails, jobSession } from './session.js';
 import { config } from './config.js';
 import './sidepanel.css';
+
+const recipeText: Record<MappingReviewItem['kind'], string> = {
+  identity: 'copied as-is',
+  date: 'date reformatted',
+  join: 'answers combined',
+  option: 'matched to an option',
+  check: 'matching choice checked',
+};
 
 function App() {
   const [connected, setConnected] = useState(false);
@@ -21,6 +30,9 @@ function App() {
   );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  // End-of-job review: null while not reviewing.
+  const [review, setReview] = useState<MappingReviewItem[] | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
   const controller = useRef<ExtensionExecutor | null>(null);
 
   useEffect(() => {
@@ -43,6 +55,11 @@ function App() {
         setError(failure instanceof Error ? failure.message : 'Could not restore this job.'),
       );
     chrome.storage.onChanged.addListener(refresh);
+    const onMessage = (message: unknown, sender: chrome.runtime.MessageSender): undefined => {
+      void executor.noteHumanEdit(message, sender).catch(() => undefined);
+      return undefined;
+    };
+    chrome.runtime.onMessage.addListener(onMessage);
     const onHide = (): void => {
       if (document.visibilityState === 'hidden') {
         executor.halt();
@@ -53,6 +70,7 @@ function App() {
     return () => {
       executor.halt();
       chrome.storage.onChanged.removeListener(refresh);
+      chrome.runtime.onMessage.removeListener(onMessage);
       document.removeEventListener('visibilitychange', onHide);
     };
   }, []);
@@ -170,7 +188,9 @@ function App() {
         <p>{message}</p>
         {job && (
           <p className="counts">
-            {job.verified} entries verified · {job.failed} attempts need attention
+            {job.verified} entries verified
+            {job.remembered ? ' (' + job.remembered + ' from saved mappings)' : ''} · {job.failed}{' '}
+            attempts need attention
           </p>
         )}
       </section>
@@ -192,7 +212,7 @@ function App() {
             Start mapping
           </button>
         )}
-        {job && (
+        {job && !review && (
           <>
             <button
               disabled={working || chatting}
@@ -203,6 +223,23 @@ function App() {
               }
             >
               Resume mapping
+            </button>
+            <button
+              className="secondary"
+              disabled={working || chatting}
+              onClick={() =>
+                void perform(async () => {
+                  await controller.current?.pause();
+                  const session = await jobSession();
+                  const items = session ? await mappingReview(session.job) : [];
+                  if (items.length) {
+                    setChosen([]);
+                    setReview(items);
+                  } else await controller.current?.finish([]);
+                })
+              }
+            >
+              Finish job
             </button>
             <button
               className="secondary"
@@ -227,6 +264,74 @@ function App() {
           </>
         )}
       </div>
+      {job && review && (
+        <section className="memory-review" aria-label="Remember mappings">
+          <h2>Remember these for next time?</h2>
+          <p>
+            SmartMapper filled these fields and read them back. Tick only the pairings that are
+            right. Next time, ticked fields are filled from memory and still checked and read back.
+            Nothing is saved unless you tick it.
+          </p>
+          <ul>
+            {review.map((item) => (
+              <li key={item.candidateId}>
+                <label>
+                  <input
+                    type="checkbox"
+                    disabled={item.edited || !item.known || working}
+                    checked={chosen.includes(item.candidateId)}
+                    onChange={(event) => {
+                      const checked = event.target.checked;
+                      setChosen((current) =>
+                        checked
+                          ? [...current, item.candidateId]
+                          : current.filter((id) => id !== item.candidateId),
+                      );
+                    }}
+                  />
+                  <span>
+                    <span className="field">
+                      {item.label || 'Unlabeled field'}
+                      {item.section ? ' · ' + item.section : ''}
+                    </span>
+                    <br />
+                    <span className="source">
+                      ← M.I.A.: {item.questions.join(' + ') || 'unknown question'} ·{' '}
+                      {recipeText[item.kind]}
+                    </span>
+                    {item.edited && (
+                      <>
+                        <br />
+                        <span className="edited">
+                          You changed this field, so it can't be saved.
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="actions">
+            <button
+              disabled={working}
+              onClick={() =>
+                void perform(async () => {
+                  await controller.current?.finish(chosen);
+                  setReview(null);
+                })
+              }
+            >
+              {chosen.length
+                ? 'Remember ' + chosen.length + ' and finish'
+                : 'Finish without saving'}
+            </button>
+            <button className="secondary" disabled={working} onClick={() => setReview(null)}>
+              Back
+            </button>
+          </div>
+        </section>
+      )}
       {!!job?.reviews.length && (
         <section>
           <h2>Needs your review</h2>

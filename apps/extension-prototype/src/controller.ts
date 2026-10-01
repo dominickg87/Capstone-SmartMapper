@@ -1,5 +1,6 @@
 import {
   ActionReceiptSchema,
+  ApproveMappingsResponseSchema,
   JobViewSchema,
   ObserveResponseSchema,
   PageObservationSchema,
@@ -10,6 +11,13 @@ import {
 } from '@smartmapper/contracts';
 import { z } from 'zod';
 import { config } from './config.js';
+import {
+  HumanEditMessageSchema,
+  clearMappingReview,
+  mappingCorrections,
+  recordEdit,
+  recordFill,
+} from './mapping-review.js';
 import { jobSession, miaToken, saveSession, type JobSession } from './session.js';
 
 const JobResponse = z.object({ job: JobViewSchema });
@@ -176,6 +184,7 @@ export class ExtensionExecutor {
       .replaceAll('/', '_')
       .replaceAll('=', '');
     const carrierOrigin = new URL(tab.url).origin;
+    await clearMappingReview();
     const { code } = z
       .object({ code: z.string() })
       .parse(
@@ -231,7 +240,60 @@ export class ExtensionExecutor {
       }
     }
     await chrome.storage.session.remove('job');
+    await clearMappingReview();
     this.update(null, 'Mapping cancelled.');
+  }
+
+  /**
+   * Ends the job after the human's end-of-job review. Only the ticked entries are remembered;
+   * memory-filled entries the human changed are reported so those fields return to the model.
+   */
+  public async finish(candidateIds: string[]): Promise<void> {
+    await this.pause();
+    const session = await jobSession();
+    if (!session) return;
+    const corrections = await mappingCorrections();
+    let saved = 0;
+    if (candidateIds.length || corrections.length) {
+      const result = ApproveMappingsResponseSchema.parse(
+        await json(
+          config.backendOrigin,
+          '/v2/jobs/' + session.job.jobId + '/mappings',
+          session.token,
+          'POST',
+          { revision: session.job.revision, candidateIds, corrections },
+        ),
+      );
+      saved = result.saved;
+    }
+    await this.cancel();
+    this.update(
+      null,
+      saved
+        ? 'Job finished. Saved ' +
+            saved +
+            (saved === 1 ? ' mapping' : ' mappings') +
+            ' for next time.'
+        : 'Job finished. No mappings were saved.',
+    );
+  }
+
+  /** Notes a human edit reported by the content script of the bound carrier tab. */
+  public async noteHumanEdit(
+    message: unknown,
+    sender: chrome.runtime.MessageSender,
+  ): Promise<void> {
+    const parsed = HumanEditMessageSchema.safeParse(message);
+    if (!parsed.success || sender.id !== chrome.runtime.id || sender.frameId !== 0) return;
+    const session = await jobSession();
+    if (
+      !session ||
+      sender.tab?.id !== session.job.binding.tabId ||
+      !sender.url ||
+      new URL(sender.url).origin !== session.job.binding.carrierOrigin
+    )
+      return;
+    await recordEdit(parsed.data.signature);
   }
 
   public halt(): void {
@@ -318,6 +380,10 @@ export class ExtensionExecutor {
         await saveSession(session);
         this.update(this.display(session.job, page), this.statusMessage(session.job));
         if (!response.batch) break;
+        const control = page.controls.find(
+          (item) => item.elementId === response.batch?.action.elementId,
+        );
+        if (control) await recordFill(response.batch, control);
         const tab = await boundTab(session);
         const latest = JobResponse.parse(
           await json(config.backendOrigin, '/v2/jobs/' + session.job.jobId, session.token),
@@ -360,6 +426,7 @@ export class ExtensionExecutor {
   private async clearExpired(): Promise<void> {
     this.halted = true;
     await chrome.storage.session.remove('job');
+    await clearMappingReview();
     this.update(null, 'This mapping session ended. Select a quote to start again.');
   }
 

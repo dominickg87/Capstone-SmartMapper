@@ -106,6 +106,10 @@ Keep the model/storage/reasoning settings already entered. Add:
 
 Choose **Apply**. Missing scope settings deliberately prevent startup.
 
+Mapping memory (proposed ADR 0007) stays off unless `AZURE_STORAGE_MAPPINGS_TABLE` names a separate
+table in the same storage account, with the same managed-identity table role. Do not enable it until
+Dom accepts ADR 0007.
+
 Under **Configuration → General settings**, use **Node 24 LTS**, Linux, **Always On**, HTTPS Only,
 TLS 1.2 or higher, and startup command **`node dist/server.js`**. Retain the separate App Service plan.
 Use the application's SDK telemetry configuration rather than enabling a second automatic monitoring
@@ -188,6 +192,16 @@ typed by the human or repeated by the assistant; do not treat it as a redacted a
 **Clear chat guidance** removes it from later requests. Durable improvements require reviewed changes
 to the shared prompt or code and regression tests. Correct missing source facts in M.I.A. and start a
 new job; chat cannot replace authoritative quote answers or authorize prohibited actions.
+
+## Mapping memory (proposed)
+
+When enabled, **Finish job** in the side panel lists the model-filled entries that passed read-back.
+Tick only correct pairings; nothing is saved otherwise. Fields you changed by hand cannot be ticked.
+Later jobs for the same user and carrier fill approved fields first, still with the fact check and
+read-back, and the status line shows how many came from saved mappings. Entries hold question IDs,
+recipes and digests, not values or labels. Memory never chooses between people or vehicles, never
+overwrites a value it did not enter, and returns a field to the model after a failure. Two consecutive
+failures disable an entry. There is no admin view yet; delete rows in the table to forget mappings.
 
 ## Retention and limitations
 

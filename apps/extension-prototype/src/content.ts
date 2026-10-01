@@ -15,6 +15,23 @@ if (!window.smartMapperContentV2) {
     z.object({ type: z.literal('execute'), batch: ActionBatchSchema }).strict(),
     z.object({ type: z.literal('clear-markers') }).strict(),
   ]);
+  // Report fields the human changes by hand (trusted events outside SmartMapper's own actions).
+  // The side panel uses this to keep corrected fields out of mapping memory.
+  const reported = new Map<string, number>();
+  const onHumanEdit = (event: Event): void => {
+    if (!event.isTrusted || session.acting) return;
+    void session
+      .signatureOf(event.target)
+      .then(async (signature) => {
+        const now = Date.now();
+        if (!signature || now - (reported.get(signature) ?? 0) < 1000) return;
+        reported.set(signature, now);
+        await chrome.runtime.sendMessage({ type: 'human-edit', signature });
+      })
+      .catch(() => undefined);
+  };
+  document.addEventListener('input', onHumanEdit, true);
+  document.addEventListener('change', onHumanEdit, true);
   chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     if (
       sender.id !== chrome.runtime.id ||

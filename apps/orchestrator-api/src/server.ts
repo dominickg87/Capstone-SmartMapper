@@ -5,6 +5,7 @@ import { ActiveTabJobService } from './active-tab-service.js';
 import { AzureCheckpointStore } from './checkpoints.js';
 import { configuration } from './config.js';
 import { createApi } from './http.js';
+import { AzureMappingStore } from './mapping-memory-store.js';
 
 const config = configuration(process.env);
 if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
@@ -26,6 +27,9 @@ const service = new ActiveTabJobService(
   mapper,
   mapper,
   config.access,
+  config.mappingsTable
+    ? new AzureMappingStore(config.tableEndpoint, config.mappingsTable)
+    : undefined,
 );
 const server = createApi(service, config.extensionOrigins, (status) => {
   insights.defaultClient?.trackMetric({

@@ -18,6 +18,17 @@ describe('deployment scope configuration', () => {
     expect(configuration(env).access.carrierOrigins).toEqual(new Set(['http://127.0.0.1:4173']));
   });
 
+  it('keeps mapping memory off unless its own table is configured', () => {
+    expect(configuration(env).mappingsTable).toBeNull();
+    expect(configuration({ ...env, AZURE_STORAGE_MAPPINGS_TABLE: ' ' }).mappingsTable).toBeNull();
+    expect(
+      configuration({ ...env, AZURE_STORAGE_MAPPINGS_TABLE: 'SmartMapperMappings' }).mappingsTable,
+    ).toBe('SmartMapperMappings');
+    expect(() => configuration({ ...env, AZURE_STORAGE_MAPPINGS_TABLE: 'mappings;drop' })).toThrow(
+      'invalid_mappings_table',
+    );
+  });
+
   it.each([
     ['SMARTMAPPER_MIA_ORIGINS', 'http://localhost:4173'],
     ['SMARTMAPPER_CARRIER_ORIGINS', 'http://carrier.test'],

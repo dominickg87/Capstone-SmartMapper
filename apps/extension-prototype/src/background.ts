@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { config } from './config.js';
+import { HumanEditMessageSchema } from './mapping-review.js';
 import { trustedStorage } from './session.js';
 
 const pendingSchema = z.object({ tabId: z.number(), state: z.string(), expiresAt: z.number() });
@@ -79,7 +80,9 @@ chrome.action.onClicked.addListener((tab) => {
 void trustedStorage();
 let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
-  if (sender.id !== chrome.runtime.id) return false;
+  // Human-edit notices are for the side panel.
+  if (sender.id !== chrome.runtime.id || HumanEditMessageSchema.safeParse(message).success)
+    return false;
   queue = queue
     .then(() => handle(message, sender))
     .then(() => {

@@ -12,6 +12,24 @@ import {
   type FactVerifier,
 } from '@smartmapper/automation-core/active-tab';
 import {
+  approveMapping,
+  controlStateDigest,
+  deriveMapping,
+  mappingCovers,
+  recordMappingOutcome,
+  replayMapping,
+  usableMapping,
+} from '@smartmapper/automation-core/mapping-memory';
+import {
+  ApproveMappingsRequestSchema,
+  type ActionBatch,
+  type ApproveMappingsResponse,
+  type AutomationActionV2,
+  type LearnedMapping,
+  type PageControl,
+  type PageObservation,
+  type SourceAnswer,
+  type SourceAnswers,
   JobViewSchema,
   MappingChatRequestSchema,
   MappingChatReplySchema,
@@ -27,7 +45,15 @@ import {
 } from '@smartmapper/contracts';
 import type { ActiveTabSourceProvider } from '@smartmapper/mia-client';
 
-import { ConflictError, type CheckpointStore, type StoredCheckpoint } from './checkpoints.js';
+import {
+  ConflictError,
+  type Checkpoint,
+  type CheckpointStore,
+  type MemoryLink,
+  type StoredCheckpoint,
+  type WatchedEntry,
+} from './checkpoints.js';
+import type { MappingMemoryStore } from './mapping-memory-store.js';
 
 export class ApiError extends Error {
   public constructor(
@@ -38,6 +64,16 @@ export class ApiError extends Error {
   }
 }
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
+const pageKey = (page: { documentId: string; routeId: string }): string =>
+  hash(page.documentId + '\0' + page.routeId);
+const WATCH_LIMIT = 120;
+
+interface PlannedAction {
+  action: AutomationActionV2;
+  sources: SourceAnswer[];
+  key: string;
+  memory?: MemoryLink;
+}
 
 export interface ServiceAccess {
   miaOrigins: ReadonlySet<string>;
@@ -52,6 +88,8 @@ export class ActiveTabJobService {
     private readonly mapper: AiMapperProvider<SmartMapperObservation, SmartMapperPlan>,
     private readonly verifier: FactVerifier,
     private readonly access: ServiceAccess,
+    // Human-approved mapping memory (proposed ADR 0007). Disabled when not configured.
+    private readonly memory?: MappingMemoryStore,
   ) {}
 
   private async authorized(
@@ -75,13 +113,112 @@ export class ActiveTabJobService {
       !this.access.miaOrigins.has(result.value.miaOrigin)
     )
       throw new ApiError(403, 'scope_not_allowed');
+    // Fill view defaults for checkpoints written before mapping memory.
+    result.value.view = JobViewSchema.parse(result.value.view);
     return { ...result, partition };
   }
 
   private async save(partition: string, record: StoredCheckpoint): Promise<JobView> {
     record.value.view.revision += 1;
+    record.value.view.candidates = (record.value.watched ?? [])
+      .flatMap((item) =>
+        item.origin === 'model' ? [{ candidateId: item.candidateId, kind: item.recipe.kind }] : [],
+      )
+      .slice(-100);
     await this.store.replace(partition, record.value.view.jobId, record.value, record.etag);
     return JobViewSchema.parse(record.value.view);
+  }
+
+  private async rememberedMappings(partition: string): Promise<Map<string, LearnedMapping>> {
+    if (!this.memory) return new Map();
+    try {
+      const entries = await this.memory.list(partition);
+      return new Map(entries.filter(usableMapping).map((entry) => [entry.signature, entry]));
+    } catch {
+      // Memory is an optimization. Without it the model plans every field as before.
+      return new Map();
+    }
+  }
+
+  private async recordOutcome(
+    partition: string,
+    value: Checkpoint,
+    signature: string,
+    success: boolean,
+  ): Promise<void> {
+    if (!success)
+      value.memorySkip = [...new Set([...(value.memorySkip ?? []), signature])].slice(-200);
+    if (!this.memory) return;
+    try {
+      const entry = await this.memory.get(partition, signature);
+      if (entry)
+        await this.memory.put(
+          partition,
+          recordMappingOutcome(entry, success, new Date().toISOString()),
+        );
+    } catch {
+      // Counters are best effort; memorySkip already stops reuse within this job.
+    }
+  }
+
+  /** Drops watched entries on this page whose value no longer matches what was verified. */
+  private async recheckWatched(
+    partition: string,
+    value: Checkpoint,
+    page: PageObservation,
+  ): Promise<void> {
+    const current = pageKey(page);
+    const kept: WatchedEntry[] = [];
+    for (const item of value.watched ?? []) {
+      const controls = page.controls.filter((control) => control.signature === item.signature);
+      let stable = item.page !== current || !controls.length;
+      for (const control of controls)
+        if ((await controlStateDigest(control, item.actionType)) === item.observedHash)
+          stable = true;
+      if (stable) kept.push(item);
+      else if (item.origin === 'memory')
+        await this.recordOutcome(partition, value, item.signature, false);
+    }
+    value.watched = kept;
+  }
+
+  /** Replays the first approved mapping on this page that still passes every normal check. */
+  private async rememberedAction(
+    partition: string,
+    value: Checkpoint,
+    page: PageObservation,
+    source: SourceAnswers,
+    remembered: Map<string, LearnedMapping>,
+  ): Promise<PlannedAction | null> {
+    const skip = new Set(value.memorySkip ?? []);
+    for (const control of page.controls) {
+      const entry = remembered.get(control.signature);
+      if (
+        !entry ||
+        skip.has(control.signature) ||
+        value.verifiedControls.includes(control.key) ||
+        (value.attempts[control.key] ?? 0) > 0
+      )
+        continue;
+      const replay = await replayMapping(entry, control, page, source);
+      if (replay?.kind !== 'act') continue;
+      const policy = evaluateActiveTabAction(replay.action, page, source);
+      const target: PageControl | undefined = policy.allowed ? policy.control : undefined;
+      if (
+        policy.allowed &&
+        target &&
+        directRepresentationMatches(replay.action, policy.sources) &&
+        (await this.verifier.verify(replay.action, target, policy.sources))
+      )
+        return {
+          action: replay.action,
+          sources: policy.sources,
+          key: target.key,
+          memory: { origin: 'memory', signature: entry.signature, actionType: entry.actionType },
+        };
+      await this.recordOutcome(partition, value, control.signature, false);
+    }
+    return null;
   }
 
   public async start(input: unknown): Promise<{ job: JobView; token: string }> {
@@ -117,6 +254,8 @@ export class ActiveTabJobService {
       verified: 0,
       failed: 0,
       reviews: [],
+      remembered: 0,
+      candidates: [],
     };
     await this.store.create(partition, view.jobId, {
       view,
@@ -134,6 +273,8 @@ export class ActiveTabJobService {
       unchangedCount: 0,
       pending: null,
       lastBatchId: null,
+      watched: [],
+      memorySkip: [],
     });
     return { job: view, token };
   }
@@ -195,6 +336,7 @@ export class ActiveTabJobService {
     value.lastFingerprint = request.observation.fingerprint;
     value.pending = null;
     value.view.reviews = [];
+    if (this.memory) await this.recheckWatched(record.partition, value, request.observation);
     if (value.actionCount >= 150 || value.unchangedCount >= 12) {
       value.view.status = 'human_input';
       value.view.reviews = [
@@ -230,6 +372,16 @@ export class ActiveTabJobService {
         ];
         return { job: await this.save(planning.partition, planning), batch: null };
       }
+      // Human-approved mappings fill known fields first; the model plans whatever remains.
+      const remembered = await this.rememberedMappings(planning.partition);
+      const fromMemory = await this.rememberedAction(
+        planning.partition,
+        planning.value,
+        request.observation,
+        source,
+        remembered,
+      );
+      if (fromMemory) return await this.dispatch(planning, fromMemory);
       const proposal = SmartMapperPlanSchema.parse(
         await this.mapper.proposeMappings({
           page: request.observation,
@@ -320,24 +472,14 @@ export class ActiveTabJobService {
         });
         return { job: await this.save(planning.partition, planning), batch: null };
       }
-      const expected = actionExpectedValue(action);
-      const batchId = randomUUID();
-      planning.value.pending = {
-        batchId,
-        actionId: action.actionId,
-        key,
-        expectedHash: expected === null ? null : await valueDigest(expected),
-        sourceAnswerIds: action.sourceAnswerIds,
-        transformation: action.transformation.kind,
-        transformationHash: hash(action.transformation.explanation),
-      };
-      planning.value.attempts[key] = (value.attempts[key] ?? 0) + 1;
-      planning.value.actionCount += 1;
-      planning.value.view.status = 'executing';
-      return {
-        job: await this.save(planning.partition, planning),
-        batch: { batchId, action, sources: policy.sources },
-      };
+      const planned: PlannedAction = { action, sources: policy.sources, key };
+      if (this.memory && policy.control) {
+        // Offer the entry for end-of-job approval only when a deterministic recipe reproduces it.
+        const derived = await deriveMapping(action, policy.control, policy.sources, source);
+        if (derived && !mappingCovers(remembered.get(policy.control.signature), derived))
+          planned.memory = { origin: 'model', signature: policy.control.signature, ...derived };
+      }
+      return await this.dispatch(planning, planned);
     } catch (error) {
       if (error instanceof ConflictError) throw error;
       planning.value.view.status = 'paused';
@@ -345,6 +487,76 @@ export class ActiveTabJobService {
       await this.save(planning.partition, planning);
       throw error;
     }
+  }
+
+  private async dispatch(
+    planning: StoredCheckpoint & { partition: string },
+    planned: PlannedAction,
+  ): Promise<ObserveResponse> {
+    const { action, key } = planned;
+    const expected = actionExpectedValue(action);
+    const batchId = randomUUID();
+    planning.value.pending = {
+      batchId,
+      actionId: action.actionId,
+      key,
+      expectedHash: expected === null ? null : await valueDigest(expected),
+      sourceAnswerIds: action.sourceAnswerIds,
+      transformation: action.transformation.kind,
+      transformationHash: hash(action.transformation.explanation),
+      ...(planned.memory ? { memory: planned.memory } : {}),
+    };
+    planning.value.attempts[key] = (planning.value.attempts[key] ?? 0) + 1;
+    planning.value.actionCount += 1;
+    planning.value.view.status = 'executing';
+    const batch: ActionBatch = {
+      batchId,
+      action,
+      sources: planned.sources,
+      origin: planned.memory?.origin === 'memory' ? 'memory' : 'model',
+    };
+    return { job: await this.save(planning.partition, planning), batch };
+  }
+
+  /**
+   * Saves the model-filled entries the human approved at the end of a job. Entries filled from
+   * memory that the human later corrected count as failures, so those fields return to the model.
+   */
+  public async approveMappings(
+    jobId: string,
+    token: string,
+    input: unknown,
+  ): Promise<ApproveMappingsResponse> {
+    const request = ApproveMappingsRequestSchema.parse(input);
+    if (!this.memory) throw new ApiError(503, 'mapping_memory_unavailable');
+    const record = await this.authorized(jobId, token);
+    const value = record.value;
+    if (
+      request.revision !== value.view.revision ||
+      ['planning', 'executing'].includes(value.view.status)
+    )
+      throw new ConflictError('approval_conflict');
+    const watched = value.watched ?? [];
+    const now = new Date().toISOString();
+    let saved = 0;
+    for (const candidateId of request.candidateIds) {
+      const item = watched.find((entry) => entry.candidateId === candidateId);
+      if (item?.origin !== 'model') continue;
+      const existing = await this.memory.get(record.partition, item.signature);
+      await this.memory.put(
+        record.partition,
+        approveMapping(existing ?? undefined, item.signature, item, now),
+      );
+      saved += 1;
+    }
+    for (const candidateId of request.corrections) {
+      const item = watched.find((entry) => entry.candidateId === candidateId);
+      if (item?.origin === 'memory')
+        await this.recordOutcome(record.partition, value, item.signature, false);
+    }
+    const handled = new Set([...request.candidateIds, ...request.corrections]);
+    value.watched = watched.filter((entry) => !handled.has(entry.candidateId));
+    return { job: await this.save(record.partition, record), saved };
   }
 
   public async chat(jobId: string, token: string, input: unknown): Promise<MappingChatResponse> {
@@ -404,10 +616,11 @@ export class ActiveTabJobService {
       ...value.recentResults.slice(-9),
       success ? result : { ...result, status: 'failed', reason: 'read_back_mismatch' },
     ];
+    const { memory: link, ...audited } = pending;
     value.audit = [
       ...value.audit.slice(-149),
       {
-        ...pending,
+        ...audited,
         status: success ? 'verified' : 'failed',
         observedHash: result.observedHash,
         sourceRevision: value.sourceRevision,
@@ -417,6 +630,24 @@ export class ActiveTabJobService {
       value.view.verified += 1;
       value.verifiedControls = [...new Set([...value.verifiedControls, pending.key])].slice(-400);
     } else if (!success) value.view.failed += 1;
+    if (link && value.page) {
+      if (success && pending.expectedHash !== null) {
+        value.watched = [
+          ...(value.watched ?? []),
+          {
+            ...link,
+            candidateId: pending.batchId,
+            page: pageKey(value.page),
+            observedHash: pending.expectedHash,
+          },
+        ].slice(-WATCH_LIMIT);
+        if (link.origin === 'memory') {
+          value.view.remembered += 1;
+          await this.recordOutcome(record.partition, value, link.signature, true);
+        }
+      } else if (!success && link.origin === 'memory')
+        await this.recordOutcome(record.partition, value, link.signature, false);
+    }
     value.view.status = ['blocked'].includes(result.status) ? 'paused' : 'running';
     value.lastBatchId = request.batchId;
     value.pending = null;

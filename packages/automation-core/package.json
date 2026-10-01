@@ -17,6 +17,10 @@
       "types": "./dist/browser-page.d.ts",
       "default": "./dist/browser-page.js"
     },
+    "./mapping-memory": {
+      "types": "./dist/mapping-memory.d.ts",
+      "default": "./dist/mapping-memory.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"

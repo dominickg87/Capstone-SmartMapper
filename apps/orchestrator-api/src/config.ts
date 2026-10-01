@@ -50,6 +50,10 @@ export function configuration(env: NodeJS.ProcessEnv) {
   const extensionIds = list(required(env, 'SMARTMAPPER_EXTENSION_IDS'));
   if (!extensionIds.size || ![...extensionIds].every((id) => /^[a-p]{32}$/.test(id)))
     throw new Error('invalid_extension_id');
+  // Mapping memory (proposed ADR 0007) stays off unless its own table is configured.
+  const mappingsTable = env.AZURE_STORAGE_MAPPINGS_TABLE?.trim() || null;
+  if (mappingsTable !== null && !/^[A-Za-z][A-Za-z0-9]{2,62}$/.test(mappingsTable))
+    throw new Error('invalid_mappings_table');
   const principals = list(required(env, 'SMARTMAPPER_ALLOWED_PRINCIPALS'));
   if (!principals.size || ![...principals].every((id) => /^[^/\s]+\/[^/\s]+$/.test(id)))
     throw new Error('invalid_principal');
@@ -72,6 +76,7 @@ export function configuration(env: NodeJS.ProcessEnv) {
     },
     tableEndpoint,
     table: required(env, 'AZURE_STORAGE_JOBS_TABLE'),
+    mappingsTable,
     extensionOrigins: new Set([...extensionIds].map((id) => 'chrome-extension://' + id)),
     access: {
       miaOrigins: origins(env, 'SMARTMAPPER_MIA_ORIGINS'),

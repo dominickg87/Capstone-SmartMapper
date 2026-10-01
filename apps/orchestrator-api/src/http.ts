@@ -70,7 +70,7 @@ export function createApi(
       send(response, 201, await service.start(await body(request)));
       return;
     }
-    const match = /^\/v2\/jobs\/([a-f0-9-]{36})(?:\/(observe|receipts|pause|chat))?$/.exec(
+    const match = /^\/v2\/jobs\/([a-f0-9-]{36})(?:\/(observe|receipts|pause|chat|mappings))?$/.exec(
       url.pathname,
     );
     const jobId = match?.[1];
@@ -89,6 +89,8 @@ export function createApi(
       send(response, 200, await service.chat(jobId, token, await body(request)));
     else if (request.method === 'POST' && operation === 'pause')
       send(response, 200, { job: await service.pause(jobId, token) });
+    else if (request.method === 'POST' && operation === 'mappings')
+      send(response, 200, await service.approveMappings(jobId, token, await body(request)));
     else throw new ApiError(404, 'not_found');
   }
   const server = createServer((request, response) => {

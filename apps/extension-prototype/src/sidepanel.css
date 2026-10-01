@@ -178,3 +178,32 @@ textarea {
   font-size: 12px;
   color: #52637b;
 }
+.memory-review {
+  border-left: 4px solid #198269;
+}
+.memory-review ul {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0;
+}
+.memory-review li label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-weight: 400;
+}
+.memory-review input[type='checkbox'] {
+  width: auto;
+  margin-top: 4px;
+}
+.memory-review .field {
+  font-weight: 600;
+}
+.memory-review .source {
+  color: #557392;
+  font-size: 12px;
+}
+.memory-review .edited {
+  color: #9b2439;
+  font-size: 12px;
+}

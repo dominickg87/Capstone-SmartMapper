@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MappingCandidateViewSchema } from './mapping-memory.js';
 
 const id = z.string().min(1).max(160);
 const shortText = z.string().max(2000);
@@ -48,6 +49,8 @@ export const PageControlSchema = z
   .object({
     elementId: id,
     key: id,
+    // Position-independent identity used by mapping memory; excludes element order and values.
+    signature: z.string().regex(/^[a-f0-9]{64}$/),
     tag: z.enum(['input', 'textarea', 'select', 'button', 'custom']),
     inputType: z.string().max(40),
     role: z.string().max(40),
@@ -277,6 +280,9 @@ export const JobViewSchema = z
     verified: z.number().int().nonnegative(),
     failed: z.number().int().nonnegative(),
     reviews: z.array(FieldReviewSchema).max(100),
+    // Verified entries that came from human-approved mapping memory.
+    remembered: z.number().int().nonnegative().default(0),
+    candidates: z.array(MappingCandidateViewSchema).max(100).default([]),
   })
   .strict();
 export type JobView = z.infer<typeof JobViewSchema>;
@@ -294,6 +300,7 @@ export const ActionBatchSchema = z
     batchId: z.string().uuid(),
     action: AutomationActionV2Schema,
     sources: z.array(SourceAnswerSchema).max(10),
+    origin: z.enum(['model', 'memory']).default('model'),
   })
   .strict();
 export type ActionBatch = z.infer<typeof ActionBatchSchema>;
@@ -305,6 +312,14 @@ export const ObserveResponseSchema = z
   })
   .strict();
 export type ObserveResponse = z.infer<typeof ObserveResponseSchema>;
+
+export const ApproveMappingsResponseSchema = z
+  .object({
+    job: JobViewSchema,
+    saved: z.number().int().nonnegative(),
+  })
+  .strict();
+export type ApproveMappingsResponse = z.infer<typeof ApproveMappingsResponseSchema>;
 
 export interface SmartMapperObservation {
   page: PageObservation;

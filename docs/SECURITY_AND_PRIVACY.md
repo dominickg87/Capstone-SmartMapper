@@ -27,6 +27,14 @@ they are not a redacted audit log. They are sent to the model with `store:false`
 Azure checkpoints and default telemetry. Clearing chat, cancellation or ending the browser session
 removes them; expired jobs are cleared when detected. Chat does not permanently train the model.
 
+Proposed ADR 0007 adds human-approved mapping memory, off unless a separate table is configured.
+Rows are scoped to the job partition (tenant, user, carrier origin) and hold control signatures,
+question IDs, recipes and digests, not answer values, labels or option text. Option and check digests
+are unsalted hashes of low-entropy choice values, so they are only stored for enum/boolean answers.
+Only explicit human approval writes rows. Remembered actions pass the same policy, fact check and
+read-back; invalid rows are ignored. The side panel keeps field labels and question wording for the
+end-of-job review in trusted session storage and clears them with the job.
+
 The extension stops on tab/origin/DOM changes. It requests only configured hosts and activeTab;
 it does not require browser-wide host permissions. The POC is disabled for unconfigured accounts.
 Tests use synthetic profiles, screenshots and data. The existing M.I.A. connection flow revokes

@@ -12,6 +12,7 @@ import {
   evaluateActiveTabAction,
   valueDigest,
 } from './active-tab.js';
+import { fieldSignature, type FieldIdentity } from './mapping-memory.js';
 
 const clean = (value: string | null | undefined, limit = 2000): string =>
   (value ?? '').replace(/\s+/g, ' ').trim().slice(0, limit);
@@ -44,6 +45,41 @@ function label(element: HTMLElement): string {
   );
 }
 
+const controlSelector =
+  'input,textarea,select,button,[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="tab"],[role="button"]';
+
+function fieldIdentity(element: HTMLElement): FieldIdentity & { tag: PageControl['tag'] } {
+  const tag: PageControl['tag'] =
+    element instanceof HTMLInputElement
+      ? 'input'
+      : element instanceof HTMLSelectElement
+        ? 'select'
+        : element instanceof HTMLTextAreaElement
+          ? 'textarea'
+          : element instanceof HTMLButtonElement
+            ? 'button'
+            : 'custom';
+  const native =
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLTextAreaElement;
+  const scope = element.closest('fieldset,[role="group"],[role="radiogroup"],section,article');
+  return {
+    tag,
+    inputType: native || element instanceof HTMLButtonElement ? element.type : '',
+    role:
+      element.getAttribute('role') ||
+      (tag === 'select' ? 'combobox' : tag === 'button' ? 'button' : 'textbox'),
+    section: clean(
+      scope?.querySelector('legend,h1,h2,h3,h4,[role="heading"]')?.textContent ||
+        (scope ? fromIds(scope, 'aria-labelledby') : ''),
+    ),
+    label: label(element),
+    name: element.getAttribute('name') ?? '',
+    id: element.id,
+  };
+}
+
 export class BrowserPageSession {
   private readonly documentId = crypto.randomUUID();
   private readonly elements = new Map<string, HTMLElement>();
@@ -51,18 +87,29 @@ export class BrowserPageSession {
   private readonly completed = new Set<string>();
   private overlay: HTMLElement | null = null;
   private omittedControls = 0;
+  private applying = false;
+
+  /**
+   * True while an action is being applied. A scripted click on a radio or checkbox still makes
+   * the browser fire trusted input/change events, which must not be mistaken for human edits.
+   */
+  public get acting(): boolean {
+    return this.applying;
+  }
 
   public clearMarkers(): void {
     this.overlay?.remove();
     this.overlay = null;
   }
 
+  /** Signature of the control containing an event target, used to notice human edits. */
+  public async signatureOf(target: EventTarget | null): Promise<string | null> {
+    const element = target instanceof Element ? target.closest(controlSelector) : null;
+    return element instanceof HTMLElement ? fieldSignature(fieldIdentity(element)) : null;
+  }
+
   private controls(): PageControl[] {
-    const candidates = Array.from(
-      document.querySelectorAll(
-        'input,textarea,select,button,[role="combobox"],[role="listbox"],[role="option"],[role="checkbox"],[role="radio"],[role="tab"],[role="button"]',
-      ),
-    )
+    const candidates = Array.from(document.querySelectorAll(controlSelector))
       .filter(visible)
       .filter((element) => !this.overlay?.contains(element));
     this.elements.clear();
@@ -79,25 +126,7 @@ export class BrowserPageSession {
         element instanceof HTMLInputElement ||
         element instanceof HTMLSelectElement ||
         element instanceof HTMLTextAreaElement;
-      const tag: PageControl['tag'] =
-        element instanceof HTMLInputElement
-          ? 'input'
-          : element instanceof HTMLSelectElement
-            ? 'select'
-            : element instanceof HTMLTextAreaElement
-              ? 'textarea'
-              : element instanceof HTMLButtonElement
-                ? 'button'
-                : 'custom';
-      const inputType = native || element instanceof HTMLButtonElement ? element.type : '';
-      const role =
-        element.getAttribute('role') ||
-        (tag === 'select' ? 'combobox' : tag === 'button' ? 'button' : 'textbox');
-      const scope = element.closest('fieldset,[role="group"],[role="radiogroup"],section,article');
-      const section = clean(
-        scope?.querySelector('legend,h1,h2,h3,h4,[role="heading"]')?.textContent ||
-          (scope ? fromIds(scope, 'aria-labelledby') : ''),
-      );
+      const { tag, inputType, role, section, label } = fieldIdentity(element);
       const context = [
         clean(fromIds(element, 'aria-describedby')),
         clean(element.closest('[role="radiogroup"]')?.getAttribute('aria-label')),
@@ -123,10 +152,11 @@ export class BrowserPageSession {
       const control: PageControl = {
         elementId,
         key: '',
+        signature: '',
         tag,
         inputType,
         role,
-        label: label(element),
+        label,
         section,
         context,
         value: clean(value, 8000),
@@ -164,6 +194,7 @@ export class BrowserPageSession {
           control.elementId,
         ].join('|'),
       );
+      if (element) control.signature = await fieldSignature(fieldIdentity(element));
     }
     const authenticationRequired =
       controls.some((control) => control.inputType === 'password') ||
@@ -290,6 +321,7 @@ export class BrowserPageSession {
       };
     }
     try {
+      this.applying = true;
       if (
         action.type === 'fill' &&
         (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
@@ -323,6 +355,7 @@ export class BrowserPageSession {
         });
       else if (action.type === 'wait')
         await new Promise((resolve) => setTimeout(resolve, action.milliseconds ?? 100));
+      this.applying = false;
       await new Promise((resolve) => setTimeout(resolve, 300));
       if (
         location.origin !== current.origin ||
@@ -356,6 +389,8 @@ export class BrowserPageSession {
       };
     } catch {
       return fail('interrupted');
+    } finally {
+      this.applying = false;
     }
   }
 }
