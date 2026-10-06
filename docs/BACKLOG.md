@@ -1,104 +1,115 @@
 # Prioritized backlog
 
-## Current active-tab POC
+## Current baseline
 
-Implemented locally: original-question catalog and M.I.A. scoped grants, managed-identity Azure
-Responses/Table adapters, v2 job API, shared action policy and read-back, POC side panel and
-active-tab loop, synthetic contract/unit/browser tests, packaging and deployment instructions.
+[ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md) is the active POC decision.
+SmartMapper uses a human-trained registry and deterministic browser execution. Model planning, PDF
+interpretation, mapping chat, prompt work, suggestions, and model verification are retired from the
+active backlog.
 
-Remaining integration steps: configure the actual demo agency origin and tenant/user scope;
-publish reviewed M.I.A. and Azure builds; verify cloud RBAC/model/table connections; run a separately
-authorized carrier acceptance session; measure field coverage and review rate. Fold validated
-findings into the live Chrome extension only after the POC.
+Implemented or in the 0.3.0 delivery:
 
-The bootstrap milestones below are historical. Repository privacy and the Azure hosting/model
-choices were settled by Dom on September 30, 2026. Remote browser delivery is deferred by ADR 0005.
+- value-free Home and Auto M.I.A. catalogs with original questions and stable source paths;
+- concrete and wildcard coverage for both Home applicants, five additional Auto drivers, and eight
+  vehicles;
+- separately authorized, verifier-bound mapping and training grants;
+- strict workflow, training, disposition, transformation, mapping-profile, and lifecycle contracts;
+- Azure Table stores for resumable jobs/drafts and immutable mapping versions;
+- the provisioned `SmartMapperMappings` table in `stsmartmapperdevdg`;
+- Map/Train panel modes, logical field capture, workflow-wide numbering, and linked page overlays;
+- all explicit dispositions, typed transforms, repeated-entity bindings, publish/test/verify/activate
+  lifecycle, and active-version resolution; and
+- deterministic action compilation, provenance, local read-back, independent failure isolation,
+  guarded ordinary Next/Continue, and human-only final actions.
 
-Dependencies marked Dom block real integration but not generic mock/core work.
+## P0: complete and prove the 0.3.0 delivery
 
-## Milestone 0 — repository safety and team start
+- Finish all repository format, lint, strict type, unit, build, and browser checks.
+- Finish M.I.A. Pint and SmartMapper/extension API feature tests on `smartmapper2.0`.
+- Cover logical radio grouping, stable signatures, overlay focus/accessibility, draft recovery, and
+  stale revision handling.
+- Cover every disposition and transformation with positive and prohibited-path tests.
+- Add synthetic end-to-end Home and Auto workflows, including maximum supported repeated entities.
+- Prove one failed field preserves successful independent receipts and continues safe sibling work.
+- Prove testable mappings cannot verify without a completed bound proof job and cannot activate
+  before verification.
+- Prove final Submit, Bind, Issue, Sell, payment, consent, attestation, signature, CAPTCHA, MFA, and
+  authentication controls are never activated.
+- Record known limitations for frames, shadow roots, custom controls, conditional scenarios, and
+  carrier layout changes.
 
-Critical path:
+Exit: all required checks pass, versions are incremented, behavior/failure paths are documented, and
+the synthetic final-action assertions remain green.
 
-- Dom: transfer repository to M.I.A. organization and make it private.
-- Dom: provide approved student usernames, permissions, CODEOWNERS, and branch-protection owner.
-- Team: validate bootstrap on all three development machines and fix reproducibility issues.
-- Team: review PROJECT_SCOPE.md, DOM_NOTES.md, SECURITY.md, and ADRs.
-- Dom/university: confirm dates, IP/NDA, presentation, and portfolio rules.
-- Team: run a threat-model workshop and assign risk owners.
+## P0: deploy the deterministic POC
 
-Exit: private protected repository, approved team access, green CI, assigned Week 1 work.
+- Review and publish the M.I.A. `smartmapper2.0` branch through its normal release process.
+- Run the quote-grant and training-grant tenant migrations for the approved demo tenant.
+- Confirm the provisioned `SmartMapperMappings` table remains reachable through the App Service
+  managed identity.
+- Add `AZURE_STORAGE_MAPPINGS_TABLE=SmartMapperMappings` to `asp-smartmapper-dev`.
+- Deploy the reviewed 0.3.0 backend ZIP and verify its `/health` build version.
+- Rebuild/reload the 0.3.0 unpacked extension with exact M.I.A., backend, and approved carrier origins.
+- Train a complete Home workflow and a complete Auto workflow, including conditional scenarios.
+- Test each immutable version with representative demo quotes, verify the proof jobs, and activate.
+- Confirm registry and checkpoint rows contain no quote answers, screenshots, HTML, tokens, or
+  browser state.
+- Run the separately authorized supervised carrier acceptance session and record coverage, precision,
+  review recall, timing, and exceptions.
 
-## Milestone 1 — requirements, contracts, and access
+Exit: ordinary jobs resolve a verified active mapping and complete known independent fields without
+any model configuration.
 
-Critical path:
+## P0: retire superseded cloud/runtime dependencies
 
-- Dom: choose initial line/state and two priority approved carriers or confirm mock-only milestone.
-- Workstream B: refine normalized field dictionary and supported-field matrix from approved inputs.
-- Workstream A: map existing extension integration boundary without copying unrelated code.
-- Workstream C: document API/auth/tenant boundary and submit Azure/access requests.
-- Team: approve synthetic acceptance fixture set and baseline measurement method.
+- Remove the App Service's Azure OpenAI endpoint, deployment, and reasoning settings after cutover.
+- Remove **Cognitive Services OpenAI User** from the SmartMapper App Service identity.
+- Delete `smartmapper-astra-dev` after confirming the deterministic deployment has no caller.
+- Disable or remove the separate legacy M.I.A. Smart Map endpoint/configuration before deleting
+  `mia-smartmap-chat`; verify no unrelated caller first.
+- Inventory every deployment before considering removal of the shared Foundry account/project.
+- Keep the App Service, plan, storage account, both SmartMapper tables, system identity, Application
+  Insights, and its linked workspace.
 
-Early risk spikes:
+## P1: training and registry usability
 
-- Carrier agreements/sandbox availability.
-- Iframe/shadow DOM and changed-layout recognition.
-- Extension service-worker suspension and tab recovery.
+- Add search/filter/grouping for the M.I.A. catalog without hiding question/entity context.
+- Add clearer same-position previews for applicants, drivers, and vehicles.
+- Add conditional-scenario coverage summaries and warn about trained pages that have not been proven.
+- Add mapping-version comparison, activation history, rollback, and reviewed archive UX.
+- Add accessible keyboard navigation between a panel row and its carrier-page badge.
+- Add exportable redacted diagnostics containing signatures, version, statuses, and reason codes.
+- Add trainer-facing detection for changed M.I.A. catalog revision and carrier page signature.
 
-## Milestone 2 — Week 3–4 technical spikes and decision gate
+## P1: quality and operations
 
-- Workstream A: active-tab end-to-end spike with persisted pause/resume.
-- Workstream B: first adapter and dynamic-row spike in mock lab.
-- Workstream C: remote login/MFA/session/handoff/cost/isolation spike.
-- Team: score every remote decision-matrix criterion with evidence.
-- Dom/technical/security owners: decide proceed, constrain, redesign, or defer remote mode.
+- Maintain a frozen synthetic acceptance suite and supported-field matrix per carrier workflow.
+- Dashboard redacted mapping coverage, receipt success, review reasons, and page timing.
+- Define alerting for registry lookup failures, storage errors, authorization failures, and unusual
+  changed-page rates.
+- Approve mapping-version retention, archive, rollback, deletion verification, and audit-access
+  policy.
+- Measure the deterministic App Service workload and resize the existing plan if justified.
+- Complete disaster-recovery and mapping-table backup/restore exercises with synthetic records.
 
-Dependencies on Dom: test authorization, accounts, network, credential owner, remote session policy,
-Azure subscription/region/budget, and exact decision owner.
+## P2: production integration
 
-## Milestone 3 — primary local workflow
+- Fold validated POC behavior into the live M.I.A. Chrome Extension only after review and UAT.
+- Define production trainer roles separately from ordinary mapping users.
+- Establish per-carrier written authorization, supported workflows, test accounts, and change owners.
+- Add approved carrier workflows through Train rather than hardcoded browser adapters.
+- Add another M.I.A. line of business only after it has a reviewed complete catalog, entity limits,
+  fixtures, and acceptance criteria.
+- Complete production privacy classification, retention, incident response, support access, and audit
+  review.
 
-- Complete workflow state persistence and stale-page recovery.
-- Implement first approved/mock adapter end to end.
-- Add repeated drivers/vehicles, transformations, conditionals, and validation.
-- Implement review UI with provenance and read-back status.
-- Add audit completeness and redaction regression.
+## Deferred and out of scope
 
-## Milestone 4 — second flow and resilience
+The remote worker remains a synthetic regression harness, not a current cloud-runtime deliverable.
+Automatic final transactions, credential storage, CAPTCHA/MFA bypass, arbitrary scripts, and browser
+profiles remain out of scope.
 
-- Add second adapter with materially different structure.
-- Add layout mutation corpus, iframes/shadow cases if approved, and error recovery.
-- Measure coverage, precision, review recall, and elapsed time.
-- Complete notification choice and user-intervention UX.
-
-## Milestone 5 — controlled AI fallback and integration
-
-- Approve AI provider/data processing or retain deterministic mock.
-- Add provider SDK only behind AiMapperProvider with schema and injection tests.
-- Integrate approved development M.I.A. API with short-lived auth.
-- Implement chosen remote proof of concept after the decision gate.
-- Run resilience, cost, privacy, and artifact-retention validation.
-
-## Milestone 6 — acceptance and handoff
-
-- Security/compliance review and remediation.
-- UAT with approved pilot users and synthetic/test data.
-- Freeze accepted fixtures and metrics.
-- Complete deployment/teardown/runbook, demo, known limitations, risk report, and backlog handoff.
-
-## Stretch goals
-
-- Additional mock mutation generator.
-- Adapter authoring/diagnostic UI.
-- Additional approved line/state after acceptance.
-- Vision fallback with approved redaction/retention.
-- Production-grade remote orchestration only if Week 4 evidence and core acceptance are strong.
-
-## First-week assignments
-
-| Owner                    | Tasks                                                                                                                       | Evidence by end of week        |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| Student A / Workstream A | Build/load extension, test state across popup close/reload, draft existing-extension questions, add accessibility test plan | Demo and issue list            |
-| Student B / Workstream B | Review contracts/adapters, expand synthetic field matrix, test changed layouts/repeated rows, calculate baseline metrics    | Contract PR and metric sheet   |
-| Student C / Workstream C | Run API/worker, diagram isolation and handoff, compare queue/host candidates, draft remote spike protocol and cost inputs   | Spike plan and architecture PR |
-| Shared                   | Threat model, Dom worksheet review, CI on each machine, weekly demo, risk owner assignment                                  | Signed notes with no secrets   |
+AI mapping fallback, document interpretation, and conversational mapping are not planned work under
+ADR 0018. Reintroducing any of them requires a new reviewed ADR, privacy and cost review, explicit
+product approval, independent fact checks, and complete regression evidence. Historical ADRs and Git
+history preserve the experiments that led to the deterministic decision.

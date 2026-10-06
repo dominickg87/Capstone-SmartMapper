@@ -57,8 +57,7 @@
     "authenticationRequired": false,
     "unsupportedFrames": 0,
     "omittedControls": 0,
-    "capturedAt": "2026-09-30T12:00:00.000Z",
-    "screenshot": "data:image/png;base64,AAAA"
+    "capturedAt": "2026-09-30T12:00:00.000Z"
   },
   "action": {
     "version": "2.0",

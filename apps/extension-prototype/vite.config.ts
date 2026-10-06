@@ -28,8 +28,6 @@ export default defineConfig(({ mode }) => {
   if (!['true', 'false'].includes(anyCarrierSetting))
     throw new Error('Expected true or false for VITE_SMARTMAPPER_ALLOW_ANY_CARRIER');
   const allowAnyCarrier = anyCarrierSetting === 'true';
-  const sourceFormat = env.VITE_SMARTMAPPER_SOURCE_FORMAT ?? 'pdf';
-  if (!['pdf', 'questions'].includes(sourceFormat)) throw new Error('Invalid source format');
   return {
     define: {
       __SMARTMAPPER_CONFIG__: JSON.stringify({
@@ -37,7 +35,6 @@ export default defineConfig(({ mode }) => {
         miaOrigin,
         carrierOrigins,
         allowAnyCarrier,
-        sourceFormat,
       }),
     },
     plugins: [

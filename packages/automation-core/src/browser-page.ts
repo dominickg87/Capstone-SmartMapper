@@ -13,6 +13,8 @@ import {
   ordinaryNextLabel,
   commitmentPattern,
   evaluateActiveTabAction,
+  semanticControlSet,
+  targetValueUnchangedOrExpected,
   valueDigest,
   unchangedAfterEntry,
 } from './active-tab.js';
@@ -30,6 +32,90 @@ const fromIds = (element: Element, name: string): string =>
     .map((id) => document.getElementById(id)?.textContent ?? '')
     .join(' ');
 
+export function boundedNearbyTextCue(value: string | null | undefined): string {
+  const cue = clean(value, 500)
+    .replace(/[\s:*]+$/g, '')
+    .trim();
+  if (!cue || cue.length > 120 || cue.split(/\s+/).length > 16 || !/[\p{L}\p{N}]/u.test(cue))
+    return '';
+  return cue;
+}
+
+const routeEnumKeys = new Set(['step', 'page', 'section', 'tab', 'screen', 'view']);
+function normalizedRouteSegment(segment: string): string {
+  let decoded = segment;
+  try {
+    decoded = decodeURIComponent(segment);
+  } catch {
+    /* Keep malformed carrier text bounded and opaque. */
+  }
+  if (/^[0-9]{4,}$/.test(decoded)) return ':id';
+  if (/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(decoded)) return ':id';
+  if (
+    decoded.length >= 8 &&
+    /^[A-Za-z0-9_-]+$/.test(decoded) &&
+    /[A-Za-z]/.test(decoded) &&
+    /[0-9]/.test(decoded)
+  )
+    return ':token';
+  return encodeURIComponent(decoded).replaceAll('%3A', ':');
+}
+
+function normalizedRouteParameters(value: string): string {
+  const parameters = new URLSearchParams(value.replace(/^[?#]/, ''));
+  return [...parameters.entries()]
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) =>
+      `${leftKey}\0${leftValue}`.localeCompare(`${rightKey}\0${rightValue}`),
+    )
+    .map(([key, item]) => {
+      const safeEnum =
+        routeEnumKeys.has(key.toLowerCase()) &&
+        (/^[A-Za-z][A-Za-z0-9_-]{0,40}$/.test(item) || /^\d{1,2}$/.test(item));
+      return `${encodeURIComponent(key)}=${safeEnum ? encodeURIComponent(item) : ':value'}`;
+    })
+    .join('&');
+}
+
+export function privacySafeRouteSeed(pathname: string, search: string, hash: string): string {
+  const path = pathname.split('/').map(normalizedRouteSegment).join('/');
+  const query = normalizedRouteParameters(search);
+  const rawHash = hash.replace(/^#/, '');
+  const normalizedHash = rawHash.includes('=')
+    ? normalizedRouteParameters(rawHash)
+    : rawHash.split('/').map(normalizedRouteSegment).join('/');
+  return `${path}${query ? `?${query}` : ''}${normalizedHash ? `#${normalizedHash}` : ''}`;
+}
+
+function nearbyPrecedingTextCue(element: HTMLElement): string {
+  const permitted = new Set(['LABEL', 'SPAN', 'STRONG', 'B', 'EM', 'SMALL', 'DT', 'TH', 'LEGEND']);
+  let sibling: ChildNode | null = element.previousSibling;
+  for (
+    let inspected = 0;
+    sibling && inspected < 4;
+    inspected++, sibling = sibling.previousSibling
+  ) {
+    if (sibling.nodeType === Node.TEXT_NODE) {
+      const cue = boundedNearbyTextCue(sibling.textContent);
+      if (cue) return cue;
+      continue;
+    }
+    if (!(sibling instanceof HTMLElement)) continue;
+    if (sibling.matches('input,textarea,select,button,a,[role="button"],[role="option"]')) break;
+    if (
+      !visible(sibling) ||
+      !permitted.has(sibling.tagName) ||
+      sibling.matches(
+        '[role="alert"],[aria-live],.error,.invalid-feedback,[data-valmsg-for],[class*="error" i],[class*="invalid" i]',
+      ) ||
+      sibling.querySelector('input,textarea,select,button,a,[role="button"],[role="option"]')
+    )
+      continue;
+    const cue = boundedNearbyTextCue(sibling.textContent);
+    if (cue) return cue;
+  }
+  return '';
+}
+
 function label(element: HTMLElement): string {
   const native =
     element instanceof HTMLInputElement ||
@@ -46,9 +132,25 @@ function label(element: HTMLElement): string {
       (element instanceof HTMLInputElement && ['button', 'submit'].includes(element.type)
         ? element.value
         : '') ||
+      (native ? nearbyPrecedingTextCue(element) : '') ||
       element.getAttribute('placeholder') ||
       element.getAttribute('title'),
   );
+}
+
+function semanticLocatorSeed(control: PageControl, element: HTMLElement | undefined): string {
+  return JSON.stringify({
+    section: control.section,
+    label: control.label,
+    tag: control.tag,
+    inputType: control.inputType,
+    role: control.role,
+    name: clean(element?.getAttribute('name')),
+    id: clean(element?.id),
+    autocomplete: clean(element?.getAttribute('autocomplete')),
+    ariaControls: clean(element?.getAttribute('aria-controls')),
+    choiceGroup: control.choiceGroup ?? null,
+  });
 }
 
 export class BrowserPageSession {
@@ -59,6 +161,7 @@ export class BrowserPageSession {
   private overlay: HTMLElement | null = null;
   private omittedControls = 0;
   private unexpanded = 0;
+  private nextElementId = 0;
 
   public async prepareSurvey(tabId: number): Promise<PageObservation> {
     this.clearMarkers();
@@ -174,7 +277,7 @@ export class BrowserPageSession {
           visible(element) && (element.shadowRoot !== null || element.tagName.includes('-')),
       ).length;
     return candidates.slice(0, 400).map((element, index) => {
-      const elementId = 'e' + index;
+      const elementId = 'pending' + index;
       this.elements.set(elementId, element);
       const native =
         element instanceof HTMLInputElement ||
@@ -190,10 +293,11 @@ export class BrowserPageSession {
               : element instanceof HTMLButtonElement
                 ? 'button'
                 : 'custom';
-      const inputType = native || element instanceof HTMLButtonElement ? element.type : '';
+      const nativeInputType = native || element instanceof HTMLButtonElement ? element.type : '';
       const role =
         element.getAttribute('role') ||
         (tag === 'select' ? 'combobox' : tag === 'button' ? 'button' : 'textbox');
+      const inputType = ['radio', 'checkbox'].includes(role) ? role : nativeInputType;
       const scope = element.closest('fieldset,[role="group"],[role="radiogroup"],section,article');
       const section = clean(
         scope?.querySelector('legend,h1,h2,h3,h4,[role="heading"]')?.textContent ||
@@ -203,6 +307,22 @@ export class BrowserPageSession {
         clean(fromIds(element, 'aria-describedby')),
         clean(element.closest('[role="radiogroup"]')?.getAttribute('aria-label')),
       ].filter(Boolean);
+      const choiceGroup =
+        ['radio'].includes(inputType) || role === 'radio'
+          ? (() => {
+              const group = element.closest('fieldset,[role="radiogroup"],[role="group"]');
+              const groupLabel = clean(
+                group?.querySelector('legend')?.textContent ||
+                  group?.getAttribute('aria-label') ||
+                  (group ? fromIds(group, 'aria-labelledby') : '') ||
+                  context[0] ||
+                  section,
+              );
+              const groupName = clean(element.getAttribute('name'));
+              const key = clean(groupName || groupLabel, 160);
+              return key ? { key, label: groupLabel || key } : null;
+            })()
+          : null;
       const options =
         element instanceof HTMLSelectElement
           ? Array.from(element.options)
@@ -244,6 +364,7 @@ export class BrowserPageSession {
           element instanceof HTMLAnchorElement ||
           !!element.closest('[data-smartmapper-human-only]'),
         ordinaryNext: this.nextElementAllowed(element),
+        choiceGroup,
         options: options.slice(0, 300),
         errors,
         rect: { x: rect.x + scrollX, y: rect.y + scrollY, width: rect.width, height: rect.height },
@@ -253,23 +374,48 @@ export class BrowserPageSession {
     });
   }
 
+  private bindStableElementIds(
+    controls: PageControl[],
+    candidateElements: ReadonlyMap<string, HTMLElement>,
+  ): void {
+    const previousByKey = new Map<string, PageControl[]>();
+    for (const control of this.last?.controls ?? []) {
+      const matches = previousByKey.get(control.key) ?? [];
+      matches.push(control);
+      previousByKey.set(control.key, matches);
+    }
+    const rebound = new Map<string, HTMLElement>();
+    const used = new Set<string>();
+    for (const control of controls) {
+      const temporaryId = control.elementId;
+      const previous = (previousByKey.get(control.key) ?? []).find(
+        (candidate) => !used.has(candidate.elementId),
+      );
+      let stableId = previous?.elementId;
+      if (!stableId) {
+        do stableId = `e${this.nextElementId++}`;
+        while (used.has(stableId));
+      }
+      control.elementId = stableId;
+      used.add(stableId);
+      const element = candidateElements.get(temporaryId);
+      if (element) rebound.set(stableId, element);
+    }
+    this.elements.clear();
+    for (const [elementId, element] of rebound) this.elements.set(elementId, element);
+  }
+
   public async observe(tabId: number, markers = false): Promise<PageObservation> {
     this.clearMarkers();
     const controls = this.controls();
+    const candidateElements = new Map(this.elements);
     await Promise.all(
       controls.map(async (control) => {
-        const element = this.elements.get(control.elementId);
-        control.key = await valueDigest(
-          [
-            control.section,
-            control.label,
-            element?.getAttribute('name') ?? '',
-            element?.id ?? '',
-            control.elementId,
-          ].join('|'),
-        );
+        const element = candidateElements.get(control.elementId);
+        control.key = await valueDigest(semanticLocatorSeed(control, element));
       }),
     );
+    this.bindStableElementIds(controls, candidateElements);
     const authenticationRequired =
       controls.some((control) => control.inputType === 'password') ||
       !!document.querySelector(
@@ -279,27 +425,36 @@ export class BrowserPageSession {
         clean(document.querySelector('h1')?.textContent),
       );
     const textFingerprint = await valueDigest(clean(document.body.innerText, 200_000));
+    const routeId = await valueDigest(
+      privacySafeRouteSeed(location.pathname, location.search, location.hash),
+    );
+    const title = clean(document.title);
+    const headings = Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"]'))
+      .filter(visible)
+      .map((element) => clean(element.textContent))
+      .slice(0, 30);
     const page: PageObservation = {
       version: '2.0',
       tabId,
       origin: location.origin,
       pageStateId: crypto.randomUUID(),
       documentId: this.documentId,
-      routeId: await valueDigest(location.pathname + location.search + location.hash),
+      routeId,
       textFingerprint,
       fingerprint: await valueDigest(
         JSON.stringify({
-          controls,
-          textFingerprint,
-          height: document.documentElement.scrollHeight,
+          routeId,
+          title,
+          headings,
+          controls: semanticControlSet(controls),
+          authenticationRequired,
+          unsupportedFrames: Array.from(document.querySelectorAll('iframe')).filter(visible).length,
+          omittedControls: this.omittedControls,
         }),
       ),
-      title: clean(document.title),
+      title,
       pageText: clean(document.body.innerText, 40_000),
-      headings: Array.from(document.querySelectorAll('h1,h2,h3,[role="heading"]'))
-        .filter(visible)
-        .map((element) => clean(element.textContent))
-        .slice(0, 30),
+      headings,
       controls,
       errors: Array.from(document.querySelectorAll('[role="alert"],.error,.invalid-feedback'))
         .filter(visible)
@@ -318,7 +473,6 @@ export class BrowserPageSession {
         width: Math.max(innerWidth, document.documentElement.scrollWidth),
         height: Math.max(innerHeight, document.documentElement.scrollHeight),
       },
-      screenshot: null,
     };
     this.last = page;
     if (markers && !authenticationRequired) {
@@ -335,6 +489,78 @@ export class BrowserPageSession {
       this.overlay = overlay;
     }
     return page;
+  }
+
+  private resolveControl(
+    reference: PageControl | undefined,
+    controls: PageControl[],
+  ): PageControl | undefined {
+    if (!reference) return undefined;
+    const semanticMatches = controls.filter((control) => control.key === reference.key);
+    if (semanticMatches.length === 1) return semanticMatches[0];
+    return semanticMatches.find((control) => control.elementId === reference.elementId);
+  }
+
+  private readControl(
+    action: ActionBatch['action'],
+    control: PageControl | undefined,
+    element: HTMLElement | undefined,
+  ): string | boolean | null {
+    if (action.type === 'check')
+      return element instanceof HTMLInputElement ? element.checked : (control?.checked ?? null);
+    if (action.type === 'fill' || action.type === 'select')
+      return element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement
+        ? element.value
+        : (control?.value ?? null);
+    if (action.purpose === 'select_option' && element?.getAttribute('aria-selected') === 'true')
+      return (
+        element.getAttribute('data-value') ??
+        element.getAttribute('value') ??
+        clean(element.textContent)
+      );
+    return null;
+  }
+
+  private async settleAfterEntry(
+    tabId: number,
+    baseline: PageObservation,
+    target: PageControl,
+    action: ActionBatch['action'],
+  ): Promise<PageObservation> {
+    const deadline = Date.now() + 600;
+    let lastState = '';
+    let stableSamples = 0;
+    let latest: PageObservation | undefined;
+    do {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      latest = await this.observe(tabId);
+      const control = this.resolveControl(target, latest.controls);
+      const element = control ? this.elements.get(control.elementId) : undefined;
+      const native =
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement;
+      const state = JSON.stringify({
+        samePage: unchangedAfterEntry(baseline, latest, target.elementId),
+        targetKey: control?.key ?? null,
+        value: this.readControl(action, control, element),
+        errors: control?.errors ?? [],
+        ariaInvalid: element?.getAttribute('aria-invalid') === 'true',
+        valid: native ? element.validity.valid : true,
+      });
+      stableSamples = state === lastState ? stableSamples + 1 : 0;
+      lastState = state;
+      if (stableSamples >= 2) break;
+    } while (Date.now() < deadline);
+    return latest ?? baseline;
+  }
+
+  private preservePageState(previous: PageObservation, current: PageObservation): void {
+    current.pageStateId = previous.pageStateId;
+    if (previous.capture) current.capture = previous.capture;
+    this.last = current;
   }
 
   public async execute(input: ActionBatch): Promise<ActionReceipt> {
@@ -354,13 +580,19 @@ export class BrowserPageSession {
       document.visibilityState !== 'visible'
     )
       return fail('page_changed');
+    const previousControl = action.elementId
+      ? previous.controls.find((control) => control.elementId === action.elementId)
+      : undefined;
     const current = await this.observe(previous.tabId);
-    const originalElements = new Map(this.elements);
-    if (previous.fingerprint !== current.fingerprint || previous.routeId !== current.routeId)
+    if (!unchangedAfterEntry(previous, current, action.elementId ?? ''))
       return fail('page_changed');
-    current.pageStateId = previous.pageStateId;
-    if (previous.capture) current.capture = previous.capture;
-    const policy = evaluateActiveTabAction(action, current, {
+    this.preservePageState(previous, current);
+    const currentControl = this.resolveControl(previousControl, current.controls);
+    if (action.elementId && !currentControl) return fail('control_missing');
+    const effectiveAction = currentControl
+      ? { ...action, elementId: currentControl.elementId }
+      : action;
+    const policy = evaluateActiveTabAction(effectiveAction, current, {
       version: '2.0',
       tenantId: 'local',
       userId: 'local',
@@ -371,28 +603,19 @@ export class BrowserPageSession {
       unavailablePaths: [],
     });
     if (!policy.allowed) return fail('policy_blocked');
-    const element = action.elementId ? this.elements.get(action.elementId) : undefined;
+    const element = currentControl ? this.elements.get(currentControl.elementId) : undefined;
     if (action.elementId && (!element || !element.isConnected)) return fail('control_missing');
-    this.completed.add(batch.batchId);
     const expected = actionExpectedValue(action);
-    const read = (): string | boolean | null => {
-      if (action.type === 'check' && element instanceof HTMLInputElement) return element.checked;
-      if (
-        (action.type === 'fill' || action.type === 'select') &&
-        (element instanceof HTMLInputElement ||
-          element instanceof HTMLSelectElement ||
-          element instanceof HTMLTextAreaElement)
-      )
-        return element.value;
-      if (action.purpose === 'select_option' && element?.getAttribute('aria-selected') === 'true')
-        return (
-          element.getAttribute('data-value') ??
-          element.getAttribute('value') ??
-          clean(element.textContent)
-        );
-      return null;
-    };
-    const before = read();
+    const before = this.readControl(action, currentControl, element);
+    const lastObserved = this.readControl(action, previousControl, undefined);
+    if (
+      ['fill', 'select', 'check'].includes(action.type) &&
+      !targetValueUnchangedOrExpected(lastObserved, before, expected)
+    ) {
+      this.last = null;
+      return fail('page_changed');
+    }
+    this.completed.add(batch.batchId);
     if (
       expected !== null &&
       before !== null &&
@@ -420,30 +643,38 @@ export class BrowserPageSession {
         // A document navigation destroys this message channel. Acknowledge dispatch, then
         // let the extension verify that a new page actually appears before mapping again.
         const navigate = async () => {
-          if (document.visibilityState !== 'visible' || !element.isConnected) return;
+          if (document.visibilityState !== 'visible') return;
           const fresh = await this.observe(previous.tabId);
-          fresh.pageStateId = current.pageStateId;
-          if (current.capture) fresh.capture = current.capture;
+          const freshControl = this.resolveControl(currentControl, fresh.controls);
+          const freshElement = freshControl ? this.elements.get(freshControl.elementId) : undefined;
           if (
-            fresh.fingerprint !== current.fingerprint ||
-            !this.nextElementAllowed(element) ||
-            ((element instanceof HTMLButtonElement || element instanceof HTMLInputElement) &&
-              element.form &&
-              !element.form.checkValidity())
+            !freshControl ||
+            !freshElement?.isConnected ||
+            !unchangedAfterEntry(current, fresh, currentControl?.elementId ?? '') ||
+            !this.nextElementAllowed(freshElement) ||
+            ((freshElement instanceof HTMLButtonElement ||
+              freshElement instanceof HTMLInputElement) &&
+              freshElement.form &&
+              !freshElement.form.checkValidity())
           )
             return;
-          const finalPolicy = evaluateActiveTabAction(action, fresh, {
-            version: '2.0',
-            tenantId: 'local',
-            userId: 'local',
-            quoteId: 'local',
-            formType: 'local',
-            revision: 'local',
-            answers: [],
-            unavailablePaths: [],
-          });
+          this.preservePageState(current, fresh);
+          const finalPolicy = evaluateActiveTabAction(
+            { ...action, elementId: freshControl.elementId },
+            fresh,
+            {
+              version: '2.0',
+              tenantId: 'local',
+              userId: 'local',
+              quoteId: 'local',
+              formType: 'local',
+              revision: 'local',
+              answers: [],
+              unavailablePaths: [],
+            },
+          );
           this.last = null;
-          if (finalPolicy.allowed) element.click();
+          if (finalPolicy.allowed) freshElement.click();
         };
         setTimeout(() => {
           void navigate().catch(() => undefined);
@@ -477,6 +708,12 @@ export class BrowserPageSession {
         element.dispatchEvent(new Event('change', { bubbles: true }));
       } else if (action.type === 'check' && element instanceof HTMLInputElement) {
         if (element.checked !== action.checked) element.click();
+      } else if (
+        action.type === 'check' &&
+        element &&
+        ['radio', 'checkbox'].includes(element.getAttribute('role') ?? '')
+      ) {
+        if ((element.getAttribute('aria-checked') === 'true') !== action.checked) element.click();
       } else if (action.type === 'click' && element) element.click();
       else if (action.type === 'key' && element && action.key) {
         element.dispatchEvent(new KeyboardEvent('keydown', { key: action.key, bubbles: true }));
@@ -488,10 +725,11 @@ export class BrowserPageSession {
         });
       else if (action.type === 'wait')
         await new Promise((resolve) => setTimeout(resolve, action.milliseconds ?? 100));
-      await new Promise((resolve) => setTimeout(resolve, 300));
       if (
         location.origin !== current.origin ||
-        (await valueDigest(location.pathname + location.search + location.hash)) !== current.routeId
+        (await valueDigest(
+          privacySafeRouteSeed(location.pathname, location.search, location.hash),
+        )) !== current.routeId
       )
         return fail('page_changed');
       if (expected === null)
@@ -501,31 +739,44 @@ export class BrowserPageSession {
           reason: 'applied',
           observedHash: null,
         };
-      const observed = read();
+      const originalObserved = this.readControl(action, currentControl, element);
+      const next = currentControl
+        ? await this.settleAfterEntry(previous.tabId, current, currentControl, action)
+        : await this.observe(previous.tabId);
+      const stable =
+        !!currentControl &&
+        ['fill', 'select', 'check'].includes(action.type) &&
+        unchangedAfterEntry(current, next, currentControl.elementId);
+      if (next.origin !== current.origin || next.routeId !== current.routeId)
+        return fail('page_changed');
+      if (stable) this.preservePageState(previous, next);
+
+      // Controlled carrier forms often replace an input node on change or blur. When the
+      // route is stable, relocate by its key and read the replacement rather than a detached
+      // node. A target-specific mismatch does not invalidate siblings on a stable semantic page.
+      const freshControl = this.resolveControl(currentControl, next.controls);
+      const rebound = freshControl ? this.elements.get(freshControl.elementId) : undefined;
+      const observed = freshControl
+        ? this.readControl(action, freshControl, rebound)
+        : originalObserved;
       const native =
-        element instanceof HTMLInputElement ||
-        element instanceof HTMLSelectElement ||
-        element instanceof HTMLTextAreaElement;
-      const invalid =
-        element?.getAttribute('aria-invalid') === 'true' || (native && !element.validity.valid);
+        rebound instanceof HTMLInputElement ||
+        rebound instanceof HTMLSelectElement ||
+        rebound instanceof HTMLTextAreaElement;
+      const invalid = freshControl
+        ? !!freshControl?.errors.length ||
+          rebound?.getAttribute('aria-invalid') === 'true' ||
+          (native && !rebound.validity.valid)
+        : element?.getAttribute('aria-invalid') === 'true' ||
+          ((element instanceof HTMLInputElement ||
+            element instanceof HTMLSelectElement ||
+            element instanceof HTMLTextAreaElement) &&
+            !element.validity.valid);
       const matches =
-        !!element?.isConnected &&
+        (freshControl ? !!rebound?.isConnected : !!element?.isConnected) &&
         observed !== null &&
         canonicalValue(observed) === canonicalValue(expected) &&
         !invalid;
-      // Carry the original plan forward only across the expected value change. Any layout,
-      // label, option, other answer, node replacement or navigation invalidates the remainder.
-      if (matches && action.elementId && ['fill', 'select', 'check'].includes(action.type)) {
-        const next = await this.observe(previous.tabId);
-        const sameElements =
-          originalElements.size === this.elements.size &&
-          [...originalElements].every(([id, original]) => this.elements.get(id) === original);
-        if (sameElements && unchangedAfterEntry(current, next, action.elementId)) {
-          next.pageStateId = previous.pageStateId;
-          if (previous.capture) next.capture = previous.capture;
-          this.last = next;
-        } else this.last = null;
-      } else this.last = null;
       return {
         actionId: action.actionId,
         status: matches ? 'verified' : 'failed',

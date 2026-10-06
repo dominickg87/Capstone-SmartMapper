@@ -1,55 +1,88 @@
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { FieldReview, JobView, MappingChatMessage } from '@smartmapper/contracts';
-import { ExtensionExecutor, type QuoteChoice } from './controller.js';
+import { diagnosticCode, type FieldReview, type JobView } from '@smartmapper/contracts';
+import { ExtensionExecutor, type QuoteChoice, type TestableMapping } from './controller.js';
 import { connectionDetails, jobSession } from './session.js';
 import { config } from './config.js';
+import { MappingStatus } from './mapping-status.js';
+import { emptyProgress, type MappingProgress } from './progress.js';
+import { TrainingPanel } from './training-panel.js';
+import { TrainingController, trainingSession } from './training-controller.js';
 import './sidepanel.css';
 
 const reviewMessages: Record<FieldReview['reason'], string> = {
-  missing_source: 'A matching saved answer is missing or unavailable in M.I.A.',
-  missing_question_context: 'I could not confidently identify what this field asks.',
-  ambiguous_match: 'I am not confident which answer belongs here. Please review.',
-  human_only: 'This control needs you to handle it.',
-  validation_error: 'The page reported a validation error. Please check this entry.',
-  unsupported_control: 'I could not safely perform the proposed action on this control.',
-  source_mismatch: 'The proposed entry could not be verified against the saved M.I.A. answer.',
-  retry_limit: 'I reached the retry limit for this field. Please review it.',
-  page_changed: 'The page changed. Please review it, then Resume mapping.',
+  missing_source: 'The trained M.I.A. field has no answer for this quote.',
+  missing_mapping: 'This carrier field has no mapping in the active trained workflow.',
+  missing_question_context: 'This field was not recognized in the trained workflow.',
+  ambiguous_match: 'More than one trained field could match this carrier control.',
+  human_only: 'This control must remain with you.',
+  human_required: 'The trainer marked this field for human entry.',
+  validation_error: 'The carrier page rejected this entry. Please review it.',
+  read_back_mismatch: 'The carrier page did not retain the trained value.',
+  unsupported_control:
+    'This carrier control needs a separately reviewed deterministic interaction.',
+  changed_target: 'The carrier field changed after this workflow was trained.',
+  changed_options: 'The carrier choices changed after this workflow was trained.',
+  source_mismatch: 'The proposed entry did not match its saved M.I.A. answer.',
+  retry_limit: 'This field reached its retry limit. Other independent fields can continue.',
+  page_changed: 'The page changed while SmartMapper was working.',
 };
+
+type PanelMode = 'map' | 'train';
 
 function App() {
   const extensionVersion = chrome.runtime.getManifest().version;
+  const [mode, setMode] = useState<PanelMode>('map');
   const [connected, setConnected] = useState(false);
   const [principal, setPrincipal] = useState<string | null>(null);
-  const [conversation, setConversation] = useState<MappingChatMessage[]>([]);
-  const [draft, setDraft] = useState('');
-  const [chatting, setChatting] = useState(false);
   const [query, setQuery] = useState('');
   const [quotes, setQuotes] = useState<QuoteChoice[]>([]);
   const [selected, setSelected] = useState('');
   const [job, setJob] = useState<JobView | null>(null);
+  const [testableMapping, setTestableMapping] = useState<TestableMapping | null>(null);
+  const [verifiedTestMapping, setVerifiedTestMapping] = useState(false);
+  const lastVerificationRevision = useRef<string | null>(null);
   const [message, setMessage] = useState(
-    'Connect to M.I.A., select a quote, and open the page you want to fill.',
+    'Connect to M.I.A., select a quote, and open the trained carrier page you want to fill.',
   );
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  const [progress, setProgress] = useState<MappingProgress>(emptyProgress);
+  const [diagnostics, setDiagnostics] = useState('');
+  const [copying, setCopying] = useState(false);
+  const [copied, setCopied] = useState(false);
   const controller = useRef<ExtensionExecutor | null>(null);
 
   useEffect(() => {
     const executor = new ExtensionExecutor((next, status) => {
       setJob(next);
       setMessage(status);
-    });
+    }, setProgress);
     controller.current = executor;
     const refresh = (): void => {
       void connectionDetails().then((details) => {
         setConnected(details.connected);
         setPrincipal(details.principal);
       });
-      void jobSession().then((session) => setConversation(session?.conversation ?? []));
     };
     refresh();
+    void jobSession().then((saved) => {
+      const mappingSelection = saved?.mappingSelection;
+      if (!mappingSelection) return;
+      setTestableMapping({
+        mappingId: mappingSelection.mappingId,
+        mappingVersion: mappingSelection.mappingVersion,
+      });
+      void trainingSession().then((training) => {
+        const publishedMapping = training?.publishedMapping;
+        if (
+          publishedMapping?.mappingId === mappingSelection.mappingId &&
+          publishedMapping.mappingVersion === mappingSelection.mappingVersion &&
+          ['verified', 'active'].includes(publishedMapping.status)
+        )
+          setVerifiedTestMapping(true);
+      });
+    });
     void executor
       .restore()
       .catch((failure: unknown) =>
@@ -70,13 +103,59 @@ function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (
+      !testableMapping ||
+      verifiedTestMapping ||
+      job?.status !== 'page_complete' ||
+      job.failed > 0 ||
+      job.reviews.length > 0 ||
+      lastVerificationRevision.current === `${job.jobId}:${job.revision}`
+    )
+      return;
+    lastVerificationRevision.current = `${job.jobId}:${job.revision}`;
+    void (async () => {
+      const evidence = await jobSession();
+      if (!evidence || evidence.job.jobId !== job.jobId) return;
+      try {
+        const verified = await new TrainingController().verify(evidence.job.jobId, evidence.token);
+        if (
+          verified.publishedMapping &&
+          ['verified', 'active'].includes(verified.publishedMapping.status)
+        ) {
+          setVerifiedTestMapping(true);
+          setMessage(
+            'The trained workflow passed a clean coverage and read-back test. Cancel this completed job, open Train, then activate it.',
+          );
+        } else {
+          setMessage(
+            'This trained scenario passed and its coverage was saved. Cancel this completed job, open another trained scenario, and start the next test.',
+          );
+        }
+      } catch (failure) {
+        setMessage(
+          failure instanceof Error
+            ? failure.message
+            : 'Continue through the remaining trained pages, then Resume mapping.',
+        );
+      }
+    })();
+  }, [job, testableMapping, verifiedTestMapping]);
+
   async function perform(operation: () => Promise<void>, blocks = true): Promise<void> {
     setError('');
     if (blocks) setWorking(true);
     try {
       await operation();
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Mapping paused. Please try again.');
+      controller.current?.reportFailure(failure);
+      setError(
+        diagnosticCode(failure) === 'timeout'
+          ? 'This step timed out. Copy diagnostics, then review the page before resuming.'
+          : failure instanceof Error
+            ? failure.message
+            : 'Mapping paused. Please try again.',
+      );
     } finally {
       if (blocks) setWorking(false);
     }
@@ -85,11 +164,32 @@ function App() {
   return (
     <main>
       <header>
-        <div className="eyebrow">M.I.A. • PROOF OF CONCEPT</div>
+        <div className="eyebrow">M.I.A. · PROOF OF CONCEPT</div>
         <h1>SmartMapper</h1>
         <p>Version {extensionVersion}</p>
-        <p>Your answers. One page at a time.</p>
+        <p>Train once. Map quickly. Review every exception.</p>
       </header>
+
+      <nav className="mode-tabs" aria-label="SmartMapper mode">
+        <button
+          type="button"
+          className={mode === 'map' ? 'active' : ''}
+          aria-current={mode === 'map' ? 'page' : undefined}
+          onClick={() => setMode('map')}
+        >
+          Map
+        </button>
+        <button
+          type="button"
+          className={mode === 'train' ? 'active' : ''}
+          aria-current={mode === 'train' ? 'page' : undefined}
+          disabled={!!job}
+          onClick={() => setMode('train')}
+        >
+          Train
+        </button>
+      </nav>
+
       <section>
         <div className="connection">
           <span className={connected ? 'dot connected' : 'dot'} />
@@ -133,7 +233,7 @@ function App() {
                     '\nM.I.A. URL: ' +
                     config.miaOrigin,
                 );
-                setMessage('Connection details copied. You can paste them into our chat.');
+                setMessage('Connection details copied.');
               }, false)
             }
           >
@@ -141,242 +241,237 @@ function App() {
           </button>
         </details>
       </section>
-      <section>
-        <label htmlFor="quote-search">Find a quote</label>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void perform(async () => {
-              const results = (await controller.current?.search(query)) ?? [];
-              setQuotes(results);
-              setSelected(results[0]?.id ?? '');
-              if (!results.length) setMessage('No quotes found. Try another name or quote number.');
-            });
+
+      {mode === 'train' ? (
+        <TrainingPanel
+          connected={connected}
+          onTrainingResolved={() => {
+            setTestableMapping(null);
+            setVerifiedTestMapping(false);
+            lastVerificationRevision.current = null;
           }}
-        >
-          <input
-            id="quote-search"
-            placeholder="Client name or quote number"
-            value={query}
-            disabled={working || !!job}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-          <button disabled={!connected || working || !!job}>Search</button>
-        </form>
-        {quotes.length > 0 && (
-          <>
-            <label htmlFor="quote">Selected quote</label>
-            <select
-              id="quote"
-              value={selected}
-              disabled={working || !!job}
-              onChange={(event) => setSelected(event.target.value)}
-            >
-              {quotes.map((quote) => (
-                <option key={quote.id} value={quote.id}>
-                  {quote.client_name} · {quote.quote_number} · {quote.form_type}
-                </option>
-              ))}
-            </select>
-          </>
-        )}
-      </section>
-      <section aria-live="polite" className="status">
-        <h2>{job ? job.status.replaceAll('_', ' ') : 'Ready when you are'}</h2>
-        <p>{message}</p>
-        {job && (
-          <p className="counts">
-            {job.verified} entries verified · {job.failed} attempts need attention
-          </p>
-        )}
-      </section>
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="actions">
-        {!job && (
-          <button
-            disabled={!selected || !connected || working}
-            onClick={() =>
-              void perform(async () => {
-                await controller.current?.start(selected);
-              })
-            }
-          >
-            Start mapping
-          </button>
-        )}
-        {job && (
-          <>
-            <button
-              disabled={working || chatting}
-              onClick={() =>
+          onTestMapping={(mapping) => {
+            setTestableMapping(mapping);
+            setVerifiedTestMapping(false);
+            lastVerificationRevision.current = null;
+            setMode('map');
+            setMessage(
+              `Testing trained mapping version ${mapping.mappingVersion}. Select a representative demo quote.`,
+            );
+          }}
+        />
+      ) : (
+        <>
+          <section>
+            <label htmlFor="quote-search">Find a quote</label>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
                 void perform(async () => {
-                  await controller.current?.run(true);
-                })
-              }
+                  const results = ((await controller.current?.search(query)) ?? []).filter(
+                    (quote) => ['home', 'auto'].includes(quote.form_type.trim().toLowerCase()),
+                  );
+                  setQuotes(results);
+                  setSelected(results[0]?.id ?? '');
+                  if (!results.length)
+                    setMessage(
+                      'No supported Home or Auto quotes found. Try another name or quote number.',
+                    );
+                });
+              }}
             >
-              Resume mapping
-            </button>
-            <button
-              className="secondary"
-              onClick={() =>
-                void perform(async () => {
-                  await controller.current?.pause();
-                }, false)
-              }
-            >
-              Pause
-            </button>
-            <button
-              className="secondary"
-              onClick={() =>
-                void perform(async () => {
-                  await controller.current?.cancel();
-                }, false)
-              }
-            >
-              Cancel job
-            </button>
-          </>
-        )}
-      </div>
-      {!!job?.reviews.length && (
-        <section>
-          <h2>Needs your review</h2>
-          <p>
-            Ask for a suggested match, or enter the answer on the carrier page and skip that field.
-            Skipping leaves its value alone and continues mapping.
-          </p>
-          <ul>
-            {job.reviews.map((review, index) => (
-              <li key={index}>
-                {review.entity ? review.entity + ': ' : ''}
-                {review.question} — {reviewMessages[review.reason]}
-                <div className="actions">
-                  <button
-                    className="secondary"
-                    disabled={working || chatting}
-                    onClick={() => {
-                      setChatting(true);
-                      void perform(async () => {
-                        try {
-                          await controller.current?.sendChat(
-                            'Suggest the best supported match for ' +
-                              review.question +
-                              ' (' +
-                              review.entity +
-                              ', field ' +
-                              (review.elementId ?? 'page') +
-                              '). Explain the PDF question and answer it comes from. If the quote sheet does not support an answer, say so. Do not invent facts or fill anything yet.',
-                          );
-                        } finally {
-                          setChatting(false);
-                        }
-                      }, false);
-                    }}
-                  >
-                    Suggest a match
-                  </button>
-                  {review.elementId &&
-                    !['human_only', 'validation_error', 'page_changed'].includes(review.reason) && (
-                      <button
-                        className="secondary"
-                        disabled={working || chatting}
-                        onClick={() =>
-                          void perform(async () => {
-                            await controller.current?.run(true, review.elementId!);
-                          })
-                        }
-                      >
-                        Skip this field
-                      </button>
-                    )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {job && (
-        <section className="mapping-chat" aria-label="Mapping chat">
-          <h2>Talk to SmartMapper</h2>
-          <p>
-            Explain what went wrong or ask about this page. Sending pauses mapping; you choose when
-            to Resume.
-          </p>
-          <div
-            role="log"
-            aria-label="Mapping conversation"
-            aria-live="polite"
-            className="chat-messages"
-          >
-            {conversation.length === 0 && (
-              <p className="chat-hint">
-                Try: “That field is for the second driver. Explain which answer you used.”
-              </p>
+              <input
+                id="quote-search"
+                placeholder="Client name or quote number"
+                value={query}
+                disabled={working || !!job}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <button disabled={!connected || working || !!job}>Search</button>
+            </form>
+            {quotes.length > 0 && (
+              <>
+                <label htmlFor="quote">Selected quote</label>
+                <select
+                  id="quote"
+                  value={selected}
+                  disabled={working || !!job}
+                  onChange={(event) => setSelected(event.target.value)}
+                >
+                  {quotes.map((quote) => (
+                    <option key={quote.id} value={quote.id}>
+                      {quote.client_name} · {quote.quote_number} · {quote.form_type}
+                    </option>
+                  ))}
+                </select>
+              </>
             )}
-            {conversation.map((item, index) => (
-              <div className={'chat-message ' + item.role} key={index}>
-                <strong>{item.role === 'user' ? 'You' : 'SmartMapper'}</strong>
-                <p>{item.text}</p>
+            {testableMapping && !job && (
+              <div className="testable-notice" role="status">
+                <strong>Test mode: mapping version {testableMapping.mappingVersion}</strong>
+                <p>
+                  This run uses the unpublished testable version. It does not replace the active
+                  mapping.
+                </p>
+                <button className="link-button" onClick={() => setTestableMapping(null)}>
+                  Use active mapping instead
+                </button>
               </div>
-            ))}
-            {chatting && <p role="status">Reading your message and the current page…</p>}
-          </div>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!draft.trim() || chatting) return;
-              setChatting(true);
-              void perform(async () => {
-                try {
-                  await controller.current?.sendChat(draft);
-                  setDraft('');
-                } finally {
-                  setChatting(false);
-                }
-              }, false);
-            }}
-          >
-            <label htmlFor="mapping-message">Your message</label>
-            <textarea
-              id="mapping-message"
-              value={draft}
-              maxLength={4000}
-              rows={4}
-              disabled={chatting}
-              placeholder="Tell SmartMapper what to look at or do differently…"
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <button disabled={!draft.trim() || chatting}>
-              {chatting ? 'Sending…' : 'Send message'}
-            </button>
-          </form>
-          <p className="chat-hint">
-            The latest 10 exchanges guide this job. Chat stays in this browser session and ends with
-            the job; it does not permanently train the model.
-          </p>
-          {!!conversation.length && (
-            <button
-              className="secondary"
-              disabled={working || chatting}
-              onClick={() =>
-                void perform(async () => {
-                  await controller.current?.clearChat();
-                })
-              }
-            >
-              Clear chat guidance
-            </button>
+            )}
+            {verifiedTestMapping && (
+              <div className="verified-notice" role="status">
+                This version passed its clean deterministic mapping test. Return to Train to
+                activate it after closing this job.
+              </div>
+            )}
+          </section>
+
+          <MappingStatus progress={progress} job={job} message={message} />
+          {(!!job || !!progress.events.length) && (
+            <details className="diagnostics">
+              <summary>Diagnostics</summary>
+              <p>Step timings and error codes. Quote answers and sign-in tokens are excluded.</p>
+              <button
+                className="secondary"
+                disabled={copying}
+                onClick={() => {
+                  setCopying(true);
+                  setCopied(false);
+                  void (async () => {
+                    try {
+                      const report = (await controller.current?.diagnosticReport()) ?? '';
+                      setDiagnostics(report);
+                      try {
+                        await navigator.clipboard.writeText(report);
+                        setCopied(true);
+                      } catch {
+                        /* The report below supports manual copying. */
+                      }
+                    } finally {
+                      setCopying(false);
+                    }
+                  })();
+                }}
+              >
+                {copying ? 'Preparing diagnostics…' : 'Copy diagnostics'}
+              </button>
+              {copied && <p role="status">Diagnostics copied.</p>}
+              {!!diagnostics && (
+                <textarea
+                  aria-label="Diagnostic report"
+                  readOnly
+                  rows={6}
+                  value={diagnostics}
+                  onFocus={(event) => event.currentTarget.select()}
+                />
+              )}
+            </details>
           )}
-        </section>
+          {error && (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="actions">
+            {!job && (
+              <button
+                disabled={!selected || !connected || working}
+                onClick={() =>
+                  void perform(async () => {
+                    await controller.current?.start(selected, testableMapping ?? undefined);
+                  })
+                }
+              >
+                {testableMapping ? 'Start test mapping' : 'Start mapping'}
+              </button>
+            )}
+            {job && (
+              <>
+                <button
+                  disabled={working}
+                  onClick={() =>
+                    void perform(async () => {
+                      await controller.current?.run(true);
+                    })
+                  }
+                >
+                  Resume mapping
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void perform(async () => {
+                      await controller.current?.pause();
+                    }, false)
+                  }
+                >
+                  Pause
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() =>
+                    void perform(async () => {
+                      await controller.current?.cancel();
+                    }, false)
+                  }
+                >
+                  Cancel job
+                </button>
+              </>
+            )}
+          </div>
+          {!!job?.reviews.length && (
+            <section>
+              <h2>Missing fields and exceptions</h2>
+              <p>SmartMapper preserved successful fields and continued other independent work.</p>
+              <ul className="review-list">
+                {job.reviews.map((review, index) => (
+                  <li key={`${review.elementId ?? 'page'}-${index}`}>
+                    <strong>
+                      {review.entity ? `${review.entity}: ` : ''}
+                      {review.question}
+                    </strong>
+                    <p>{reviewMessages[review.reason]}</p>
+                    <div className="actions">
+                      {review.elementId && (
+                        <button
+                          className="secondary compact"
+                          onClick={() => void controller.current?.focusReview(review.elementId!)}
+                        >
+                          Show on carrier page
+                        </button>
+                      )}
+                      {review.elementId &&
+                        ![
+                          'human_only',
+                          'human_required',
+                          'validation_error',
+                          'page_changed',
+                        ].includes(review.reason) && (
+                          <button
+                            className="secondary compact"
+                            disabled={working}
+                            onClick={() =>
+                              void perform(async () => {
+                                await controller.current?.run(true, review.elementId!);
+                              })
+                            }
+                          >
+                            Skip this field
+                          </button>
+                        )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
       )}
+
       <footer>
-        Ordinary Next/Continue can run after a clean page review. Binding, issuing, selling, consent
-        and signatures stay with you.
+        SmartMapper fills only trained, supported fields and verifies browser read-back. Binding,
+        issuing, selling, payment, consent, attestation and signatures stay with you.
       </footer>
     </main>
   );

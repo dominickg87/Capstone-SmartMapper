@@ -21,7 +21,7 @@ silently dismisses them.
 2. Role plus accessible name.
 3. Nearby stable text, form name, or documented stable ID.
 4. Controlled semantic fallback with confidence evidence.
-5. AI-assisted target proposal with mandatory schema/policy gate.
+5. Human-trained registry mapping with mandatory schema/policy gate.
 6. Human review.
 
 Do not lead with long nth-child selectors, absolute XPath, transient framework classes, coordinates,

@@ -46,9 +46,10 @@ remain. Custom, hidden, virtualized and embedded forms can still require human r
 Independent approved entries execute in document order, up to 48 per batch. A controlling
 answer that changes the form invalidates the remaining batch; fresh inspection plans the
 new fields. Existing answer hashes, page structure, labels/options, required fields and
-errors are checked before accepting a completed batch. If every editable field is verified
-and the page is unchanged and clean, the backend completes review without another model
-planning call. Otherwise it replans. This does not remove independent source verification
+errors are checked before accepting a completed batch. The original build required every editable
+field to have a verified receipt before local completion. ADR 0016 supersedes that narrow condition:
+the latest stable-page plan defines the targets that need receipts, while required-field, page-error,
+review and structure checks remain mandatory. This does not remove independent source verification
 or authorize new facts or final commitments. A PDF alone is not a speed guarantee.
 
 ## Interactive review

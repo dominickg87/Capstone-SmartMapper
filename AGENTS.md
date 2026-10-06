@@ -10,18 +10,17 @@ into an assumption.
 
 ## Architectural invariants
 
-ADR 0005 is the current POC baseline. Implement active-tab v2 in this repository and the approved
+ADR 0018 is the current POC baseline. Implement active-tab v2 in this repository and the approved
 MIA web app branch. Do not edit the live MIA-Chrome-Extension repository. The v1 remote worker is a
-synthetic regression harness, not a current cloud-runtime deliverable. Model-assisted representation
-changes are permitted with source IDs, independent equivalence checks and browser read-back.
-ADR 0013 adds PDF quote-sheet context for the current POC. Document citations are untrusted
-until independently checked against the original PDF; the catalog flow remains a regression path.
+synthetic regression harness, not a current cloud-runtime deliverable. The active runtime uses a
+human-trained, versioned mapping registry with deterministic execution. Astra, PDF interpretation,
+mapping chat, prompts, suggestions and model verification are retired from SmartMapper.
 
 - Keep one shared automation core with ExtensionExecutor and RemoteBrowserExecutor adapters.
 - Keep carrier adapters independent from execution environments.
-- Keep provider-specific AI code behind AiMapperProvider.
-- Treat all model output as untrusted and schema validate it before policy evaluation.
-- The model may emit only the versioned allowlisted AutomationAction union.
+- Persist only value-free carrier structure and allowlisted mapping metadata in training/registry data.
+- Require an explicit disposition for every trained carrier field and explicit opt-in for workflow controls.
+- Publish immutable testable versions, require clean durable proof coverage, and activate atomically.
 - Resolve semantic source paths to actual values only at the approved target field.
 - Preserve source-field provenance for every action and perform normalized post-entry read-back.
 - Keep long-running state resumable outside an extension service worker's lifetime.

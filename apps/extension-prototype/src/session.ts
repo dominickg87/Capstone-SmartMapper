@@ -1,11 +1,18 @@
-import { JobViewSchema, MappingConversationSchema } from '@smartmapper/contracts';
+import { JobViewSchema } from '@smartmapper/contracts';
 import { z } from 'zod';
 
 export const SessionSchema = z.object({
   job: JobViewSchema,
   token: z.string(),
   windowId: z.number(),
-  conversation: MappingConversationSchema.default([]),
+  mappingSelection: z
+    .object({
+      mode: z.literal('testable'),
+      mappingId: z.string().uuid(),
+      mappingVersion: z.number().int().positive(),
+    })
+    .strict()
+    .optional(),
 });
 export type JobSession = z.infer<typeof SessionSchema>;
 

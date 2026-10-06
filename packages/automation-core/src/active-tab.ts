@@ -1,15 +1,11 @@
 import {
   AutomationActionV2Schema,
-  MAX_SECTION_ACTIONS,
   type AutomationActionV2,
-  type FactVerification,
-  type FactVerificationEntry,
   type JobBinding,
   type PageControl,
   type PageObservation,
   type SourceAnswer,
   type SourceAnswers,
-  type QuoteSheet,
 } from '@smartmapper/contracts';
 
 export function carrierOriginAllowed(
@@ -64,16 +60,18 @@ export function pageReadyToAdvance(page: PageObservation): boolean {
     page.controls.every((control) => {
       if (control.disabled) return true;
       if (control.errors.length) return false;
-      if (
-        control.humanOnly &&
-        ['checkbox', 'radio', 'text', 'textarea', 'file'].includes(control.inputType)
-      )
-        return ['checkbox', 'radio'].includes(control.inputType)
+      if (control.humanOnly && ['input', 'textarea', 'select', 'custom'].includes(control.tag))
+        return ['checkbox', 'radio'].includes(control.inputType) ||
+          ['checkbox', 'radio'].includes(control.role)
           ? control.checked
           : !!control.value;
       if (!control.required) return true;
       if (control.requiredSatisfied !== undefined) return control.requiredSatisfied;
-      if (['checkbox', 'radio'].includes(control.inputType)) return control.checked;
+      if (
+        ['checkbox', 'radio'].includes(control.inputType) ||
+        ['checkbox', 'radio'].includes(control.role)
+      )
+        return control.checked;
       return !!control.value;
     })
   );
@@ -81,6 +79,17 @@ export function pageReadyToAdvance(page: PageObservation): boolean {
 
 export function canonicalValue(value: string | number | boolean): string {
   return String(value).normalize('NFKC').trim().replace(/\s+/g, ' ');
+}
+
+export function targetValueUnchangedOrExpected(
+  lastObserved: string | boolean | null,
+  fresh: string | boolean | null,
+  expected: string | boolean | null,
+): boolean {
+  if (expected === null) return true;
+  if (lastObserved === null || fresh === null) return false;
+  const freshValue = canonicalValue(fresh);
+  return freshValue === canonicalValue(lastObserved) || freshValue === canonicalValue(expected);
 }
 
 export async function valueDigest(value: string | number | boolean): Promise<string> {
@@ -188,9 +197,18 @@ export function evaluateActiveTabAction(
       !control.options.some((option) => option.value === action.value))
   )
     return deny('unknown_option');
-  if (action.type === 'check' && (!control || !['checkbox', 'radio'].includes(control.inputType)))
+  if (
+    action.type === 'check' &&
+    (!control ||
+      (!['checkbox', 'radio'].includes(control.inputType) &&
+        !['checkbox', 'radio'].includes(control.role)))
+  )
     return deny('unsupported_control');
-  if (action.type === 'check' && control?.inputType === 'radio' && action.checked !== true)
+  if (
+    action.type === 'check' &&
+    (control?.inputType === 'radio' || control?.role === 'radio') &&
+    action.checked !== true
+  )
     return deny('unsupported_control');
   if (
     action.type === 'key' &&
@@ -203,7 +221,7 @@ export function evaluateActiveTabAction(
       open_control: control.role === 'combobox' || control.role === 'listbox',
       select_option: control.role === 'option' && action.value === control.value,
       add_entity:
-        /^(add|new)\s+(another\s+|a\s+)?(driver|vehicle|property|address|household member)\b/i.test(
+        /^(add|new)\s+(another\s+|a\s+)?(applicant|driver|vehicle|property|address|household member)\b/i.test(
           control.label,
         ),
       expand_section: control.role !== 'tab' && /^(expand|show|open)\b/i.test(control.label),
@@ -217,76 +235,10 @@ export function evaluateActiveTabAction(
   return { allowed: true, action, sources: resolved, control };
 }
 
-export interface FactVerifier {
-  verifySection(
-    entries: FactVerificationEntry[],
-    page: PageObservation,
-    document?: QuoteSheet,
-  ): Promise<FactVerification[]>;
-  verify(
-    action: AutomationActionV2,
-    control: PageControl,
-    sources: SourceAnswer[],
-    page: PageObservation,
-    document?: QuoteSheet,
-  ): Promise<FactVerification>;
-}
-
-// Multi-field plans require independent native entries covered by current page images.
-export function sectionActionsAllowed(
-  actions: AutomationActionV2[],
-  page: PageObservation,
-): boolean {
-  if (
-    actions.length <= 1 &&
-    (!page.capture || !actions.length || !['fill', 'select', 'check'].includes(actions[0]!.type))
-  )
-    return true;
-  if (
-    new Set(actions.map((action) => action.actionId)).size !== actions.length ||
-    new Set(actions.map((action) => action.elementId)).size !== actions.length
-  )
-    return false;
-  if (page.capture && page.coordinates === 'document' && page.images?.length) {
-    return actions.every((action) => {
-      const control = page.controls.find((item) => item.elementId === action.elementId);
-      return (
-        ['fill', 'select', 'check'].includes(action.type) &&
-        !!control &&
-        ((page.capture?.mode === 'targeted' && !!control.label.trim()) ||
-          page.images!.some(
-            (image) =>
-              control.rect.x >= image.x &&
-              control.rect.y >= image.y &&
-              control.rect.x + control.rect.width <= image.x + image.width &&
-              control.rect.y + control.rect.height <= image.y + image.height,
-          ))
-      );
-    });
-  }
-  if (actions.length > MAX_SECTION_ACTIONS) return false;
-  const section = page.controls.find(
-    (control) => control.elementId === actions[0]?.elementId,
-  )?.section;
-  return actions.every((action) => {
-    const control = page.controls.find((item) => item.elementId === action.elementId);
-    return (
-      ['fill', 'select', 'check'].includes(action.type) &&
-      !!control &&
-      !!page.viewport &&
-      control.section === section &&
-      control.rect.x >= (page.scroll?.x ?? 0) &&
-      control.rect.y >= (page.scroll?.y ?? 0) &&
-      control.rect.x + control.rect.width <= (page.scroll?.x ?? 0) + page.viewport.width &&
-      control.rect.y + control.rect.height <= (page.scroll?.y ?? 0) + page.viewport.height
-    );
-  });
-}
-
 export function unchangedAfterEntry(
   before: PageObservation,
   after: PageObservation,
-  elementId: string,
+  _elementId: string,
 ): boolean {
   const comparable = (page: PageObservation) => ({
     documentId: page.documentId,
@@ -295,17 +247,10 @@ export function unchangedAfterEntry(
     tabId: page.tabId,
     title: page.title,
     headings: page.headings,
-    errors: page.errors,
-    textFingerprint: page.textFingerprint,
     authenticationRequired: page.authenticationRequired,
     unsupportedFrames: page.unsupportedFrames,
     omittedControls: page.omittedControls,
-    viewport: page.viewport,
-    controls: page.controls.map((control) =>
-      control.elementId === elementId
-        ? { ...control, value: '', checked: false, requiredSatisfied: true, errors: [] }
-        : control,
-    ),
+    controls: semanticControlSet(page.controls),
   });
   return (
     !after.authenticationRequired &&
@@ -313,13 +258,32 @@ export function unchangedAfterEntry(
   );
 }
 
-export function directRepresentationMatches(
-  action: AutomationActionV2,
-  sources: SourceAnswer[],
-): boolean {
-  if (action.transformation.kind !== 'identity') return true;
-  if (sources.length !== 1 || sources[0]?.value === null || sources[0]?.value === undefined)
-    return false;
-  const expected = actionExpectedValue(action);
-  return expected !== null && canonicalValue(sources[0].value) === canonicalValue(expected);
+// A control's semantic shape deliberately excludes its generated element ID, current answer,
+// validation state and geometry. Those properties routinely change when controlled React inputs
+// rerender and do not identify a different question. Policy is still evaluated against the fresh
+// control before every action, so disabled/human-only changes remain material safety boundaries.
+export function semanticControlShape(control: PageControl): Record<string, unknown> {
+  return {
+    key: control.key,
+    tag: control.tag,
+    inputType: control.inputType,
+    role: control.role,
+    label: control.label,
+    section: control.section,
+    required: control.required,
+    disabled: control.disabled,
+    humanOnly: control.humanOnly,
+    ordinaryNext: control.ordinaryNext ?? false,
+    options: control.options
+      .map((option) => ({ value: option.value, label: option.label }))
+      .sort((left, right) =>
+        `${left.value}\u0000${left.label}`.localeCompare(`${right.value}\u0000${right.label}`),
+      ),
+  };
+}
+
+export function semanticControlSet(controls: PageControl[]): Record<string, unknown>[] {
+  return controls
+    .map(semanticControlShape)
+    .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)));
 }

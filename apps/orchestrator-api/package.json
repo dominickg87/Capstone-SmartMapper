@@ -1,6 +1,6 @@
 {
   "name": "@smartmapper/orchestrator-api",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "files": [
@@ -17,7 +17,6 @@
   "dependencies": {
     "@azure/data-tables": "^13.3.2",
     "@azure/identity": "^4.13.3",
-    "@smartmapper/ai-mapper": "workspace:*",
     "@smartmapper/automation-core": "workspace:*",
     "@smartmapper/contracts": "workspace:*",
     "@smartmapper/mia-client": "workspace:*",

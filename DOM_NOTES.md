@@ -1,5 +1,35 @@
 # Current decisions — September 30, 2026
 
+- October 6, build 0.3.0: Dom replaced the active Astra/PDF mapping experiment with a
+  human-trained deterministic registry; see ADR 0018. Training covers Home and Auto, including every
+  supported repeated applicant, driver, and vehicle field. Carrier fields receive obvious linked
+  page/panel numbers and an explicit source, default, fixed operational value, human-required,
+  ignore, or leave-blank disposition. M.I.A. choices show the original question and entity context.
+  The carrier origin/base URL is part of workflow identity. Production continues independent known
+  fields and highlights missing mappings. Astra, PDF interpretation, mapping chat and model
+  verification leave the active v2 runtime after the deterministic path passes validation.
+
+- October 2, build 0.2.9: The 0.2.8 trace proved Astra completed planning and verification before
+  the active-tab executor failed. A routine same-page rerender caused a read-back mismatch and then
+  invalidated the next approved entry as `page_changed`. ADR 0017 batches local entry, relocates each
+  fresh control by semantic identity, separates validation/value mutations from material page
+  changes, preserves isolated failures, and adds redacted action receipt context. No new Azure
+  resource is required.
+
+- October 2, build 0.2.8: One complete Astra plan now governs each stable page. The checkpoint records
+  the plan's semantic target keys, and local completion verifies those entries against their expected
+  hashes. Prefilled carrier values and optional blank controls omitted by the plan do not force a
+  second model call. Required fields, errors, reviews, or a changed page shape still block completion.
+
+- October 2, build 0.2.7: The first instrumented live run proved that a read-back mismatch discarded
+  four approved actions, switched whole-page planning from low to max reasoning, and caused 92-second
+  and 150-second recovery calls. ADR 0015 keeps routine planning low, reads replacement controlled
+  inputs after rerender, and continues independent approved fields while quarantining the failed field.
+
+- October 2, build 0.2.6: Dom requested a live progress loader, step descriptions and logs after
+  a timeout. ADR 0014 adds actual stage telemetry, elapsed time, copyable redacted diagnostics,
+  bounded operation deadlines and cancellation. No model or provisioning change is required.
+
 - October 1, build 0.2.5: Dom approved sending the M.I.A. PDF quote sheet directly to Astra,
   targeted page images, page batches and local completion checks; see ADR 0013. This replaces
   catalog-derived source questions for PDF jobs. PDF citations, independent document verification,

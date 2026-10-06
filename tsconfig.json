@@ -5,7 +5,6 @@
     { "path": "packages/automation-core" },
     { "path": "packages/carrier-adapters" },
     { "path": "packages/mia-client" },
-    { "path": "packages/ai-mapper" },
     { "path": "packages/observability" },
     { "path": "apps/mock-carriers" },
     { "path": "apps/extension-prototype" },

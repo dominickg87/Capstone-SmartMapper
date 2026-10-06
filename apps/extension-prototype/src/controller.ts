@@ -3,10 +3,14 @@ import {
   JobViewSchema,
   ObserveResponseSchema,
   PageObservationSchema,
-  MappingChatMessageSchema,
-  MappingChatResponseSchema,
-  MAX_PAGE_IMAGES,
-  MAX_SURVEY_BYTES,
+  DiagnosticsResponseSchema,
+  MappingStageSchema,
+  DiagnosticCodeSchema,
+  MAX_PAGE_ACTIONS,
+  type MappingStage,
+  type DiagnosticCode,
+  type DiagnosticCounts,
+  type DiagnosticEvent,
   type ActionBatch,
   type ActionReceipt,
   type JobView,
@@ -15,7 +19,12 @@ import {
 import { z } from 'zod';
 import { carrierOriginAllowed } from '@smartmapper/automation-core/active-tab';
 import { config } from './config.js';
+import { shouldContinueAfterReceipt } from './batch-continuation.js';
+import { canExecuteFreshNavigation } from './navigation-guard.js';
+import { sanitizedCarrierPageUrl } from './carrier-url.js';
 import { jobSession, miaToken, saveSession, type JobSession } from './session.js';
+import { ProgressTracker, type MappingProgress } from './progress.js';
+import { markerFromControl } from './training-overlay.js';
 
 const JobResponse = z.object({ job: JobViewSchema });
 const Started = JobResponse.extend({ token: z.string() });
@@ -30,11 +39,40 @@ const SearchResponse = z.object({
   ),
 });
 export type QuoteChoice = z.infer<typeof SearchResponse>['results'][number];
+export type TestableMapping = { mappingId: string; mappingVersion: number };
+
+const BatchExecutionResponseSchema = z
+  .object({
+    receipts: ActionReceiptSchema.array().max(MAX_PAGE_ACTIONS),
+    stopReason: z.enum(['complete', 'cancelled', 'blocked', 'page_operation_failed']),
+  })
+  .strict();
+const ExecutionProgressMessageSchema = z
+  .object({
+    type: z.literal('smartmapper-execution-progress'),
+    contentVersion: z.string(),
+    executionId: z.string().uuid(),
+    index: z.number().int().min(1).max(MAX_PAGE_ACTIONS),
+    total: z.number().int().min(1).max(MAX_PAGE_ACTIONS),
+    phase: z.enum(['begin', 'end', 'error']),
+    actionId: z.string().min(1).max(160),
+    receipt: ActionReceiptSchema.optional(),
+  })
+  .strict();
+const ExecutionReadyMessageSchema = z
+  .object({
+    type: z.literal('smartmapper-execution-ready'),
+    contentVersion: z.string(),
+    executionId: z.string().uuid(),
+  })
+  .strict();
 
 class ApiError extends Error {
   public constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: DiagnosticCode,
+    public readonly stage?: MappingStage,
   ) {
     super(message);
   }
@@ -49,35 +87,64 @@ async function json(
   token: string | null,
   method = 'GET',
   body?: unknown,
+  options: { signal?: AbortSignal; requestId?: string; timeoutMs?: number } = {},
 ): Promise<unknown> {
-  const response = await fetch(new URL(path, origin), {
-    method,
-    redirect: 'error',
-    cache: 'no-store',
-    credentials: 'omit',
-    signal: AbortSignal.timeout(180_000),
-    headers: {
-      accept: 'application/json',
-      'content-type': 'application/json',
-      ...(token ? { authorization: 'Bearer ' + token } : {}),
-    },
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!response.ok)
+  let response: Response;
+  try {
+    response = await fetch(new URL(path, origin), {
+      method,
+      redirect: 'error',
+      cache: 'no-store',
+      credentials: 'omit',
+      signal: AbortSignal.any([
+        AbortSignal.timeout(options.timeoutMs ?? (/\/observe$/.test(path) ? 30_000 : 20_000)),
+        ...(options.signal ? [options.signal] : []),
+      ]),
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        ...(token ? { authorization: 'Bearer ' + token } : {}),
+        ...(origin === config.backendOrigin
+          ? { 'x-smartmapper-request-id': options.requestId ?? crypto.randomUUID() }
+          : {}),
+      },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'TimeoutError')
+      throw new ApiError(
+        504,
+        'This step timed out. Copy diagnostics, then review the page and Resume mapping.',
+        'timeout',
+      );
+    throw error;
+  }
+  if (!response.ok) {
+    const detail = z
+      .object({
+        diagnosticCode: DiagnosticCodeSchema.optional(),
+        stage: MappingStageSchema.optional(),
+      })
+      .safeParse(await response.json().catch(() => null));
     throw new ApiError(
       response.status,
-      response.status === 401
-        ? 'Your connection expired. Reconnect to M.I.A. and start again.'
-        : response.status === 410
-          ? 'This mapping session expired. Select a quote and start again.'
-          : response.status === 403
-            ? 'This demo account or page is not enabled for SmartMapper.'
-            : response.status === 409
-              ? 'The page or job changed. Review it, then Resume mapping.'
-              : response.status === 422
-                ? 'This quote cannot be mapped. Select a supported Home or Auto quote.'
-                : 'Mapping paused. Check the service connection and try Resume mapping.',
+      response.status === 504
+        ? 'The mapping service timed out on this step. Copy diagnostics, then review the page and Resume mapping.'
+        : response.status === 401
+          ? 'Your connection expired. Reconnect to M.I.A. and start again.'
+          : response.status === 410
+            ? 'This mapping session expired. Select a quote and start again.'
+            : response.status === 403
+              ? 'This demo account or page is not enabled for SmartMapper.'
+              : response.status === 409
+                ? 'The page or job changed. Review it, then Resume mapping.'
+                : response.status === 422
+                  ? 'This quote cannot be mapped. Select a supported Home or Auto quote.'
+                  : 'Mapping paused. Check the service connection and try Resume mapping.',
+      detail.success ? detail.data.diagnosticCode : undefined,
+      detail.success ? detail.data.stage : undefined,
     );
+  }
   return (await response.json()) as unknown;
 }
 
@@ -114,132 +181,41 @@ async function boundTab(
   return { ...tab, id: tab.id, url: tab.url };
 }
 
-let lastCaptureAt = 0;
-const surveyContents = (page: PageObservation): string =>
-  JSON.stringify({
-    document: page.documentId,
-    route: page.routeId,
-    text: page.textFingerprint,
-    controls: page.controls.map(({ rect: _rect, ...control }) => control),
-    errors: page.errors,
-    width: page.scroll?.width,
-    height: page.scroll?.height,
-    viewport: page.viewport,
-  });
-
-async function observePage(session: JobSession, halted = () => false): Promise<PageObservation> {
+type PageProgress = <T>(
+  stage: MappingStage,
+  work: () => Promise<T>,
+  counts?: DiagnosticCounts,
+) => Promise<T>;
+async function observePage(
+  session: JobSession,
+  halted = () => false,
+  progress: PageProgress = (_stage, work) => work(),
+): Promise<PageObservation> {
   const tab = await boundTab(session);
   await chrome.scripting.executeScript({
     target: { tabId: tab.id, frameIds: [0] },
     files: ['content.js'],
   });
   try {
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (halted()) throw new Error('Mapping paused.');
-      const initial = PageObservationSchema.parse(
-        await chrome.tabs.sendMessage(tab.id, { type: 'prepare-survey', tabId: tab.id }),
-      );
-      if (initial.authenticationRequired)
-        throw new Error('Complete sign-in or verification yourself, then Resume mapping.');
-      if (!initial.viewport || !initial.scroll)
-        throw new Error('Reload SmartMapper to inspect this page.');
-      const images: NonNullable<PageObservation['images']> = [];
-      const positions = (total: number, viewport: number): number[] => {
-        const result = [0];
-        while (result[result.length - 1]! + viewport < total && result.length <= MAX_PAGE_IMAGES)
-          result.push(Math.min(total - viewport, result[result.length - 1]! + viewport * 0.8));
-        return result;
-      };
-      const xs = positions(initial.scroll.width, initial.viewport.width);
-      const ys = positions(initial.scroll.height, initial.viewport.height);
-      const targeted = config.sourceFormat === 'pdf';
-      const targets = initial.controls.filter(
-        (control) =>
-          !control.disabled &&
-          !control.humanOnly &&
-          (!control.label.trim() || control.tag === 'custom'),
-      );
-      const surveyPositions = ys
-        .flatMap((y) => xs.map((x) => ({ x, y })))
-        .filter(
-          ({ x, y }) =>
-            !targeted ||
-            (x === 0 && y === 0) ||
-            targets.some(
-              (control) =>
-                control.rect.x >= x &&
-                control.rect.y >= y &&
-                control.rect.x + control.rect.width <= x + initial.viewport!.width &&
-                control.rect.y + control.rect.height <= y + initial.viewport!.height,
-            ),
-        );
-      let changed = false;
-      let bytes = 0;
-      for (const { x, y } of surveyPositions) {
-        if (images.length >= MAX_PAGE_IMAGES || bytes >= MAX_SURVEY_BYTES) break;
-        if (halted()) throw new Error('Mapping paused.');
-        await boundTab(session);
-        const current = PageObservationSchema.parse(
-          await chrome.tabs.sendMessage(tab.id, { type: 'survey-position', tabId: tab.id, x, y }),
-        );
-        if (surveyContents(current) !== surveyContents(initial)) {
-          changed = true;
-          break;
-        }
-        // Chrome permits at most two visible-tab captures per second.
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.max(0, 550 - (Date.now() - lastCaptureAt))),
-        );
-        if (halted()) throw new Error('Mapping paused.');
-        await boundTab(session);
-        const screenshot = await chrome.tabs.captureVisibleTab(tab.windowId, {
-          format: 'jpeg',
-          quality: 70,
-        });
-        lastCaptureAt = Date.now();
-        await boundTab(session);
-        bytes += screenshot.length;
-        if (bytes >= MAX_SURVEY_BYTES) break;
-        images.push({
-          screenshot,
-          x: current.scroll!.x,
-          y: current.scroll!.y,
-          width: current.viewport!.width,
-          height: current.viewport!.height,
-        });
-        if (changed || images.length >= MAX_PAGE_IMAGES || bytes >= MAX_SURVEY_BYTES) break;
-      }
-      const page = PageObservationSchema.parse(
-        await chrome.tabs.sendMessage(tab.id, {
-          type: 'finish-survey',
-          tabId: tab.id,
-          complete:
-            !changed &&
-            images.length === surveyPositions.length &&
-            (!targeted ||
-              targets.every((control) =>
-                images.some(
-                  (image) =>
-                    control.rect.x >= image.x &&
-                    control.rect.y >= image.y &&
-                    control.rect.x + control.rect.width <= image.x + image.width &&
-                    control.rect.y + control.rect.height <= image.y + image.height,
-                ),
-              )),
-          targeted,
-        }),
-      );
-      if (changed || page.fingerprint !== initial.fingerprint) continue;
-      if (!images.length)
-        throw new Error('The page could not be captured. Review it, then Resume mapping.');
-      page.images = images;
-      page.screenshot = images[0]!.screenshot;
-      await boundTab(session);
-      return PageObservationSchema.parse(page);
-    }
-    throw new Error(
-      'The page changed while it was being inspected. Let it finish loading, then Resume mapping.',
+    if (halted()) throw new Error('Mapping paused.');
+    const initial = PageObservationSchema.parse(
+      await progress('discover', () =>
+        chrome.tabs.sendMessage(tab.id, { type: 'prepare-survey', tabId: tab.id }),
+      ),
     );
+    if (initial.authenticationRequired)
+      throw new Error('Complete sign-in or verification yourself, then Resume mapping.');
+    if (halted()) throw new Error('Mapping paused.');
+    const page = PageObservationSchema.parse(
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'finish-survey',
+        tabId: tab.id,
+        complete: true,
+        targeted: false,
+      }),
+    );
+    await boundTab(session);
+    return page;
   } finally {
     await chrome.tabs.sendMessage(tab.id, { type: 'clear-markers' }).catch(() => undefined);
   }
@@ -291,50 +267,410 @@ async function executeEntry(
       await chrome.tabs.sendMessage(tab.id, { type: 'execute', batch }),
     );
   } catch (error) {
-    // A normal answer-triggered postback can destroy the reply channel before read-back.
-    // Never claim that entry succeeded. Reinspect the same route and verify its saved value.
-    if (!page.capture || !['fill', 'select', 'check'].includes(batch.action.type)) throw error;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      if (halted()) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const current = await boundTab(session);
-      if (current.status === 'loading') continue;
-      let next: PageObservation;
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id, frameIds: [0] },
-          files: ['content.js'],
-        });
-        next = PageObservationSchema.parse(
-          await chrome.tabs.sendMessage(tab.id, { type: 'observe', tabId: tab.id }),
-        );
-        await chrome.tabs.sendMessage(tab.id, { type: 'clear-markers' });
-      } catch {
-        continue;
-      }
-      if (
-        next.documentId !== page.documentId &&
-        next.routeId === page.routeId &&
-        !next.authenticationRequired
-      )
-        return {
-          actionId: batch.action.actionId,
-          status: 'blocked',
-          reason: 'page_changed',
-          observedHash: null,
-        };
-      throw error;
-    }
-    throw error;
+    return recoverInterruptedEntry(session, batch, page, halted, error);
   }
+}
+
+async function recoverInterruptedEntry(
+  session: JobSession,
+  batch: ActionBatch,
+  page: PageObservation,
+  halted: () => boolean,
+  originalError: unknown,
+): Promise<ActionReceipt> {
+  // A normal answer-triggered postback can destroy the reply channel before read-back.
+  // Never claim that entry succeeded. Reinspect the same route and verify its saved value.
+  if (!page.capture || !['fill', 'select', 'check'].includes(batch.action.type))
+    throw originalError;
+  const tab = await boundTab(session);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (halted()) throw originalError;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const current = await boundTab(session);
+    if (current.status === 'loading') continue;
+    let next: PageObservation;
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, frameIds: [0] },
+        files: ['content.js'],
+      });
+      next = PageObservationSchema.parse(
+        await chrome.tabs.sendMessage(tab.id, { type: 'observe', tabId: tab.id }),
+      );
+      await chrome.tabs.sendMessage(tab.id, { type: 'clear-markers' });
+    } catch {
+      continue;
+    }
+    if (
+      next.documentId !== page.documentId &&
+      next.routeId === page.routeId &&
+      !next.authenticationRequired
+    )
+      return {
+        actionId: batch.action.actionId,
+        status: 'blocked',
+        reason: 'page_changed',
+        observedHash: null,
+      };
+    throw originalError;
+  }
+  throw originalError;
 }
 
 export class ExtensionExecutor {
   private halted = true;
   private busy = false;
-  private chatting = false;
-  private interaction = 0;
-  public constructor(private readonly update: (job: JobView | null, message: string) => void) {}
+  private activeRequest: AbortController | undefined;
+  private activeContentExecution:
+    { tabId: number; executionId: string; port: chrome.runtime.Port } | undefined;
+  private readonly progress: ProgressTracker;
+  public constructor(
+    private readonly update: (job: JobView | null, message: string) => void,
+    progress: (state: MappingProgress) => void = () => undefined,
+  ) {
+    this.progress = new ProgressTracker(progress);
+  }
+
+  private cancelContentExecution(): void {
+    const active = this.activeContentExecution;
+    if (!active) return;
+    void chrome.tabs
+      .sendMessage(active.tabId, {
+        type: 'cancel-execution',
+        executionId: active.executionId,
+      })
+      .catch(() => undefined);
+    active.port.disconnect();
+  }
+
+  private async executeEntryBatch(
+    session: JobSession,
+    batches: ActionBatch[],
+    page: PageObservation,
+    offset: number,
+    total: number,
+  ): Promise<{
+    receipts: ActionReceipt[];
+    stopReason: 'complete' | 'cancelled' | 'blocked' | 'page_operation_failed';
+    session: JobSession;
+  }> {
+    const tab = await boundTab(session);
+    const executionId = crypto.randomUUID();
+    const receipts = new Map<string, ActionReceipt>();
+    let latestSession = session;
+    let receiptError: unknown;
+    let currentIndex = 1;
+    let filling: DiagnosticEvent | undefined = this.progress.begin(
+      'fill',
+      session.job.jobId,
+      undefined,
+      { batchIndex: offset + 1, batchSize: total },
+    );
+    this.update(session.job, `Filling page: field ${offset + 1} of ${total}\u2026`);
+    const recordReceipt = async (
+      batch: ActionBatch,
+      receipt: ActionReceipt,
+      index: number,
+    ): Promise<boolean> => {
+      const checking = this.progress.begin('read_back', latestSession.job.jobId, undefined, {
+        batchIndex: offset + index,
+        batchSize: total,
+      });
+      try {
+        const result = JobResponse.parse(
+          await json(
+            config.backendOrigin,
+            '/v2/jobs/' + latestSession.job.jobId + '/receipts',
+            latestSession.token,
+            'POST',
+            {
+              revision: latestSession.job.revision,
+              batchId: batch.batchId,
+              receipt,
+            },
+            { requestId: checking.requestId },
+          ),
+        );
+        if (this.halted) return false;
+        this.progress.finish(checking);
+        latestSession = { ...latestSession, job: result.job };
+        receipts.set(receipt.actionId, receipt);
+        await saveSession(latestSession);
+        this.update(this.display(latestSession.job, page), this.statusMessage(latestSession.job));
+        await this.showReviewMarkers(latestSession, page);
+        return shouldContinueAfterReceipt(receipt, latestSession.job.status, this.halted);
+      } catch (error) {
+        receiptError = error;
+        if (!this.halted) this.progress.finish(checking, error);
+        return false;
+      }
+    };
+    const port = chrome.tabs.connect(tab.id, {
+      frameId: 0,
+      name: 'smartmapper-execution:' + executionId,
+    });
+    let readySettled = false;
+    let settleReady: (ready: boolean) => void = () => undefined;
+    const ready = new Promise<boolean>((resolve) => {
+      settleReady = (value) => {
+        if (readySettled) return;
+        readySettled = true;
+        resolve(value);
+      };
+    });
+    const readyTimer = setTimeout(() => settleReady(false), 2000);
+    const acknowledge = (index: number, actionId: string, continueExecution: boolean): void => {
+      try {
+        port.postMessage({
+          type: 'smartmapper-execution-ack',
+          executionId,
+          index,
+          actionId,
+          continue: continueExecution,
+        });
+      } catch {
+        /* A closed panel cancels the content-side queue. */
+      }
+    };
+    const listener = (input: unknown): void => {
+      const readyMessage = ExecutionReadyMessageSchema.safeParse(input);
+      if (
+        readyMessage.success &&
+        readyMessage.data.executionId === executionId &&
+        readyMessage.data.contentVersion === chrome.runtime.getManifest().version
+      ) {
+        settleReady(true);
+        return;
+      }
+      const parsed = ExecutionProgressMessageSchema.safeParse(input);
+      if (
+        !parsed.success ||
+        parsed.data.contentVersion !== chrome.runtime.getManifest().version ||
+        parsed.data.executionId !== executionId ||
+        parsed.data.total !== batches.length
+      )
+        return;
+      const batch = batches[parsed.data.index - 1];
+      if (!batch || batch.action.actionId !== parsed.data.actionId) return;
+      if (parsed.data.phase === 'begin') {
+        if (parsed.data.index !== currentIndex) {
+          if (filling) this.progress.finish(filling);
+          currentIndex = parsed.data.index;
+          filling = this.progress.begin('fill', session.job.jobId, undefined, {
+            batchIndex: offset + currentIndex,
+            batchSize: total,
+          });
+        }
+        this.update(
+          latestSession.job,
+          `Filling page: field ${offset + parsed.data.index} of ${total}\u2026`,
+        );
+        acknowledge(parsed.data.index, parsed.data.actionId, !this.halted);
+      } else if (parsed.data.phase === 'end' && parsed.data.receipt) {
+        if (filling) this.progress.finish(filling);
+        filling = undefined;
+        void recordReceipt(batch, parsed.data.receipt, parsed.data.index)
+          .then((continueExecution) =>
+            acknowledge(parsed.data.index, parsed.data.actionId, continueExecution),
+          )
+          .catch(() => acknowledge(parsed.data.index, parsed.data.actionId, false));
+      } else if (parsed.data.phase === 'error') {
+        if (filling)
+          this.progress.finish(
+            filling,
+            new Error('The carrier page could not complete this field operation.'),
+          );
+        filling = undefined;
+        acknowledge(parsed.data.index, parsed.data.actionId, false);
+      } else {
+        acknowledge(parsed.data.index, parsed.data.actionId, false);
+      }
+    };
+    const disconnected = (): void => settleReady(false);
+    port.onMessage.addListener(listener);
+    port.onDisconnect.addListener(disconnected);
+    let result: z.infer<typeof BatchExecutionResponseSchema> | undefined;
+    let sendError: unknown;
+    try {
+      if (!(await ready)) throw new Error('The carrier page execution channel did not open.');
+      this.activeContentExecution = { tabId: tab.id, executionId, port };
+      result = BatchExecutionResponseSchema.parse(
+        await chrome.tabs.sendMessage(tab.id, {
+          type: 'execute-batch',
+          executionId,
+          batches,
+        }),
+      );
+    } catch (error) {
+      sendError = error;
+    } finally {
+      clearTimeout(readyTimer);
+      port.onMessage.removeListener(listener);
+      port.onDisconnect.removeListener(disconnected);
+      try {
+        port.disconnect();
+      } catch {
+        /* The content document may already have closed the port. */
+      }
+      if (this.activeContentExecution?.executionId === executionId)
+        this.activeContentExecution = undefined;
+    }
+
+    let stopReason = result?.stopReason ?? (this.halted ? 'cancelled' : 'page_operation_failed');
+    if (receiptError && !this.halted) stopReason = 'page_operation_failed';
+    if (sendError && !this.halted) {
+      const interrupted = batches[currentIndex - 1];
+      if (interrupted && !receipts.has(interrupted.action.actionId)) {
+        try {
+          const receipt = await recoverInterruptedEntry(
+            session,
+            interrupted,
+            page,
+            () => this.halted,
+            sendError,
+          );
+          const recorded = await recordReceipt(interrupted, receipt, currentIndex);
+          if (!recorded && receipt.status !== 'blocked') stopReason = 'page_operation_failed';
+          stopReason = receipt.status === 'blocked' ? 'blocked' : stopReason;
+        } catch {
+          stopReason = 'page_operation_failed';
+        }
+      }
+    }
+    if (filling) {
+      if (stopReason === 'page_operation_failed')
+        this.progress.finish(
+          filling,
+          new Error('The carrier page could not complete this field operation.'),
+        );
+      else this.progress.finish(filling);
+    }
+    return {
+      receipts: batches.flatMap((batch) => {
+        const receipt = receipts.get(batch.action.actionId);
+        return receipt ? [receipt] : [];
+      }),
+      stopReason,
+      session: latestSession,
+    };
+  }
+
+  public diagnostics(): string {
+    return this.progress.report();
+  }
+  public reportFailure(error: unknown): void {
+    this.progress.fail(error);
+  }
+  public async diagnosticReport(): Promise<string> {
+    const session = await jobSession();
+    if (session) {
+      try {
+        const result = DiagnosticsResponseSchema.parse(
+          await json(
+            config.backendOrigin,
+            '/v2/jobs/' + session.job.jobId + '/diagnostics',
+            session.token,
+            'GET',
+            undefined,
+            { timeoutMs: 5000 },
+          ),
+        );
+        this.progress.merge(result.events, undefined, result.buildVersion);
+      } catch {
+        /* Local events are still useful when the service cannot be reached. */
+      }
+    }
+    return this.progress.report();
+  }
+
+  private async showReviewMarkers(session: JobSession, page: PageObservation): Promise<void> {
+    const tab = await boundTab(session);
+    const markers = session.job.reviews.flatMap((review, index) => {
+      if (!review.elementId) return [];
+      const control = page.controls.find((item) => item.elementId === review.elementId);
+      if (!control) return [];
+      return [
+        markerFromControl(
+          review.elementId,
+          index + 1,
+          control,
+          review.reason === 'human_only' || review.reason === 'human_required'
+            ? 'human'
+            : 'missing',
+        ),
+      ];
+    });
+    await chrome.tabs
+      .sendMessage(tab.id, { type: 'show-training-overlay', markers })
+      .catch(() => undefined);
+  }
+
+  public async focusReview(elementId: string): Promise<void> {
+    const session = await jobSession();
+    if (!session) return;
+    const tab = await boundTab(session);
+    await chrome.tabs
+      .sendMessage(tab.id, { type: 'focus-training-field', fieldId: elementId })
+      .catch(() => undefined);
+  }
+
+  private async jobRequest(session: JobSession, body: unknown): Promise<unknown> {
+    const started = this.progress.begin('request', session.job.jobId);
+    const controller = new AbortController();
+    const polling = new AbortController();
+    this.activeRequest = controller;
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async (): Promise<void> => {
+      try {
+        const result = DiagnosticsResponseSchema.parse(
+          await json(
+            config.backendOrigin,
+            '/v2/jobs/' + session.job.jobId + '/diagnostics',
+            session.token,
+            'GET',
+            undefined,
+            { signal: polling.signal, timeoutMs: 5000 },
+          ),
+        );
+        if (!done && !controller.signal.aborted)
+          this.progress.merge(result.events, started.requestId, result.buildVersion);
+      } catch {
+        /* The main request reports failures; missed progress polls never stop mapping. */
+      }
+      if (!done)
+        timer = setTimeout(() => {
+          void poll();
+        }, 2000);
+    };
+    timer = setTimeout(() => {
+      void poll();
+    }, 100);
+    try {
+      const result = await json(
+        config.backendOrigin,
+        '/v2/jobs/' + session.job.jobId + '/observe',
+        session.token,
+        'POST',
+        body,
+        { requestId: started.requestId, signal: controller.signal },
+      );
+      if (!controller.signal.aborted) this.progress.finish(started);
+      return result;
+    } catch (error) {
+      if (!controller.signal.aborted)
+        this.progress.finish(
+          error instanceof ApiError && error.stage ? { ...started, stage: error.stage } : started,
+          error,
+        );
+      throw error;
+    } finally {
+      done = true;
+      clearTimeout(timer);
+      polling.abort();
+      if (this.activeRequest === controller) this.activeRequest = undefined;
+    }
+  }
 
   public async search(query: string): Promise<QuoteChoice[]> {
     const token = await miaToken();
@@ -364,12 +700,14 @@ export class ExtensionExecutor {
     }
   }
 
-  public async start(quoteId: string): Promise<void> {
+  public async start(quoteId: string, mappingSelection?: TestableMapping): Promise<void> {
     if (await jobSession())
       throw new Error('Cancel the current job before selecting another quote.');
     const token = await miaToken();
     if (!token) throw new Error('Connect to M.I.A. first.');
     const tab = await boundTab();
+    this.progress.reset();
+    const authorizing = this.progress.begin('authorize', null);
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     const verifier = btoa(String.fromCharCode(...bytes))
       .replaceAll('+', '-')
@@ -383,6 +721,7 @@ export class ExtensionExecutor {
       .replaceAll('/', '_')
       .replaceAll('=', '');
     const carrierOrigin = new URL(tab.url).origin;
+    const carrierPageUrl = sanitizedCarrierPageUrl(tab.url);
     const { code } = z.object({ code: z.string() }).parse(
       await json(
         config.miaOrigin,
@@ -393,28 +732,46 @@ export class ExtensionExecutor {
           challenge,
           carrierOrigin,
           tabId: tab.id,
-          ...(config.sourceFormat === 'pdf' ? { sourceFormat: 'pdf' } : {}),
         },
       ),
     );
     const result = Started.parse(
-      await json(config.backendOrigin, '/v2/jobs', null, 'POST', {
-        miaOrigin: config.miaOrigin,
-        code,
-        verifier,
-        carrierOrigin,
-        tabId: tab.id,
-        ...(config.sourceFormat === 'pdf' ? { sourceFormat: 'pdf' } : {}),
-      }),
+      await json(
+        config.backendOrigin,
+        '/v2/jobs',
+        null,
+        'POST',
+        {
+          miaOrigin: config.miaOrigin,
+          code,
+          verifier,
+          carrierOrigin,
+          carrierPageUrl,
+          tabId: tab.id,
+          ...(mappingSelection
+            ? { mappingSelection: { mode: 'testable', ...mappingSelection } }
+            : {}),
+        },
+        { requestId: authorizing.requestId },
+      ),
     );
-    await saveSession({ ...result, windowId: tab.windowId });
+    await saveSession({
+      ...result,
+      windowId: tab.windowId,
+      ...(mappingSelection
+        ? { mappingSelection: { mode: 'testable' as const, ...mappingSelection } }
+        : {}),
+    });
+    this.progress.finish(authorizing);
     this.update(result.job, 'Mapping this page…');
     await this.run(false);
   }
 
   public async pause(): Promise<void> {
-    this.interaction += 1;
     this.halted = true;
+    this.activeRequest?.abort();
+    this.cancelContentExecution();
+    this.progress.stop();
     const session = await jobSession();
     if (!session) return;
     const result = JobResponse.parse(
@@ -431,8 +788,10 @@ export class ExtensionExecutor {
   }
 
   public async cancel(): Promise<void> {
-    this.interaction += 1;
     this.halted = true;
+    this.activeRequest?.abort();
+    this.cancelContentExecution();
+    this.progress.stop();
     const session = await jobSession();
     if (session) {
       try {
@@ -440,6 +799,11 @@ export class ExtensionExecutor {
       } catch (error) {
         if (!expired(error)) throw error;
       }
+      const tab = await boundTab(session).catch(() => null);
+      if (tab)
+        await chrome.tabs
+          .sendMessage(tab.id, { type: 'clear-training-overlay' })
+          .catch(() => undefined);
     }
     await chrome.storage.session.remove('job');
     this.update(null, 'Mapping cancelled.');
@@ -447,115 +811,86 @@ export class ExtensionExecutor {
 
   public halt(): void {
     this.halted = true;
-  }
-
-  public async sendChat(text: string): Promise<void> {
-    if (this.chatting) throw new Error('Wait for the current reply.');
-    const message = MappingChatMessageSchema.parse({ role: 'user', text });
-    this.chatting = true;
-    this.halted = true;
-    try {
-      await this.pause();
-      const interaction = this.interaction;
-      const session = await jobSession();
-      if (!session) throw new Error('Start a mapping job before chatting about its page.');
-      const conversation = [...session.conversation.slice(-18), message];
-      const observation = await observePage(session);
-      if (interaction !== this.interaction) return;
-      this.update(session.job, 'Mapping paused. Reading your message and the current page…');
-      const result = MappingChatResponseSchema.parse(
-        await json(
-          config.backendOrigin,
-          '/v2/jobs/' + session.job.jobId + '/chat',
-          session.token,
-          'POST',
-          { revision: session.job.revision, observation, conversation },
-        ),
-      );
-      const latest = await jobSession();
-      if (interaction !== this.interaction || latest?.job.jobId !== session.job.jobId) return;
-      await saveSession({
-        ...latest,
-        job: result.job,
-        conversation: [...conversation, { role: 'assistant', text: result.response.reply }],
-      });
-      this.update(result.job, 'Reply ready. Continue chatting or press Resume mapping.');
-    } catch (error) {
-      // The server may have advanced its revision even if inference failed.
-      await this.restore().catch(() => undefined);
-      throw error;
-    } finally {
-      this.chatting = false;
-    }
-  }
-
-  public async clearChat(): Promise<void> {
-    if (this.chatting) throw new Error('Wait for the current reply.');
-    await this.pause();
-    const session = await jobSession();
-    if (session) await saveSession({ ...session, conversation: [] });
+    this.activeRequest?.abort();
+    this.cancelContentExecution();
+    this.progress.stop();
   }
 
   public async run(resume = true, skipElementId?: string): Promise<void> {
-    if (this.chatting) throw new Error('Wait for the chat reply before resuming.');
     if (this.busy) return;
     this.busy = true;
     this.halted = false;
     try {
-      let session = await jobSession();
-      if (!session) throw new Error('Select a quote to start mapping.');
+      const storedSession = await jobSession();
+      if (!storedSession) throw new Error('Select a quote to start mapping.');
+      let session: JobSession = storedSession;
       let first = true;
       while (!this.halted) {
         this.update(session.job, 'Reading this page and opening its sections…');
-        const page = await observePage(session, () => this.halted);
-        if (this.halted) break;
-        this.update(
-          session.job,
-          config.sourceFormat === 'pdf'
-            ? 'Reading your M.I.A. quote sheet and planning this page…'
-            : 'Planning this page against your M.I.A. answers…',
+        const observing = session;
+        const page = await this.progress.step(
+          first ? 'discover' : 'review',
+          session.job.jobId,
+          () =>
+            observePage(
+              observing,
+              () => this.halted,
+              (stage, work, counts) => this.progress.step(stage, observing.job.jobId, work, counts),
+            ),
         );
+        if (this.halted) break;
+        this.update(session.job, 'Matching this page to the trained carrier workflow…');
         const response = ObserveResponseSchema.parse(
-          await json(
-            config.backendOrigin,
-            '/v2/jobs/' + session.job.jobId + '/observe',
-            session.token,
-            'POST',
-            {
-              revision: session.job.revision,
-              resume: first && resume,
-              ...(first && skipElementId ? { skipElementId } : {}),
-              observation: page,
-              conversation: session.conversation,
-            },
-          ),
+          await this.jobRequest(session, {
+            revision: session.job.revision,
+            resume: first && resume,
+            ...(first && skipElementId ? { skipElementId } : {}),
+            observation: page,
+          }),
         );
         first = false;
         if (this.halted) break;
         session = { ...session, job: response.job };
         await saveSession(session);
         this.update(this.display(session.job, page), this.statusMessage(session.job));
+        await this.showReviewMarkers(session, page);
         if (!response.batch) break;
         const batches = [response.batch, ...(response.followingBatches ?? [])];
+        const entryBatches = batches.filter((batch) => batch.action.type !== 'next_page');
+        const entryExecution = entryBatches.length
+          ? await this.executeEntryBatch(session, entryBatches, page, 0, batches.length)
+          : undefined;
+        if (entryExecution) session = entryExecution.session;
+        if (this.halted) break;
+        if (entryExecution?.stopReason === 'page_operation_failed')
+          throw new Error(
+            'The carrier page stopped responding while fields were being filled. Review the page, then Resume mapping.',
+          );
+        if (entryExecution && entryExecution.stopReason !== 'complete') {
+          if (session.job.status === 'running') continue;
+          break;
+        }
+        if (entryExecution) {
+          // Discard every navigation action planned before field read-back. A complete entry batch
+          // still requires a new whole-page observation and a fresh server-approved Next action.
+          if (['executing', 'running'].includes(session.job.status)) continue;
+          break;
+        }
+        if (!canExecuteFreshNavigation(batches, null, session.job)) break;
         for (const [index, batch] of batches.entries()) {
           if (this.halted) break;
-          this.update(
-            session.job,
-            batch.action.type === 'next_page'
-              ? 'Page reviewed. Moving to the next page…'
-              : `Filling page: field ${index + 1} of ${batches.length}…`,
-          );
-          await boundTab(session);
-          const latest = JobResponse.parse(
-            await json(config.backendOrigin, '/v2/jobs/' + session.job.jobId, session.token),
-          );
-          if (
-            this.halted ||
-            latest.job.revision !== session.job.revision ||
-            latest.job.status !== 'executing'
-          )
-            break;
+          if (batch.action.type !== 'next_page') continue;
+          const filling = this.progress.begin('navigate', session.job.jobId, undefined, {
+            batchIndex: index + 1,
+            batchSize: batches.length,
+          });
+          this.update(session.job, 'Page reviewed. Moving to the next page…');
           const receipt = await executeEntry(session, batch, page, () => this.halted);
+          if (!this.halted) this.progress.finish(filling);
+          const checking = this.progress.begin('read_back', session.job.jobId, undefined, {
+            batchIndex: index + 1,
+            batchSize: batches.length,
+          });
           const result = JobResponse.parse(
             await json(
               config.backendOrigin,
@@ -563,16 +898,21 @@ export class ExtensionExecutor {
               session.token,
               'POST',
               { revision: session.job.revision, batchId: batch.batchId, receipt },
+              { requestId: checking.requestId },
             ),
           );
           if (this.halted) break;
+          this.progress.finish(checking);
           session = { ...session, job: result.job };
           await saveSession(session);
-          this.update(session.job, this.statusMessage(session.job));
+          this.update(this.display(session.job, page), this.statusMessage(session.job));
           if (batch.action.type === 'next_page' && receipt.status === 'executed') {
-            await waitForNextPage(session, page, () => this.halted);
+            const navigating = session;
+            await this.progress.step('navigate', session.job.jobId, () =>
+              waitForNextPage(navigating, page, () => this.halted),
+            );
           }
-          if (['blocked', 'failed'].includes(receipt.status)) break;
+          if (receipt.status === 'blocked') break;
         }
         if (session.job.status !== 'running') break;
       }
@@ -580,10 +920,12 @@ export class ExtensionExecutor {
       if (this.halted) return;
       if (expired(error)) await this.clearExpired();
       else await this.pause().catch(() => undefined);
+      this.progress.fail(error);
       throw error;
     } finally {
       this.busy = false;
       this.halted = true;
+      this.progress.stop();
     }
   }
 

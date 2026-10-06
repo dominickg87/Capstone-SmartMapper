@@ -1,48 +1,37 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
-import { documentSources, type AiMapperProvider } from '@smartmapper/ai-mapper';
 import {
   actionExpectedValue,
-  changesAnswer,
   carrierOriginAllowed,
-  controlIsHumanOnly,
-  directRepresentationMatches,
   evaluateActiveTabAction,
-  sectionActionsAllowed,
+  pageReadyToAdvance,
   validatePageBinding,
   valueDigest,
-  pageReadyToAdvance,
-  type FactVerifier,
 } from '@smartmapper/automation-core/active-tab';
+import { compileRegistryPage, stableTargetSignature } from '@smartmapper/automation-core/registry';
 import {
   JobViewSchema,
-  MappingChatRequestSchema,
-  MappingChatReplySchema,
-  type MappingChatResponse,
+  MappingLineOfBusinessSchema,
   ObserveRequestSchema,
   ReceiptRequestSchema,
-  SmartMapperPlanSchema,
   StartJobSchema,
-  QuoteSheetSchema,
-  type QuoteSheet,
-  type FieldReview,
   type ActionBatch,
-  type FactVerificationEntry,
+  type FieldReview,
   type JobView,
+  type MappingProfile,
   type ObserveResponse,
-  type SmartMapperObservation,
-  type SmartMapperPlan,
-  type PageObservation,
-  type PageControl,
+  type SourceAnswer,
+  type SourceAnswers,
 } from '@smartmapper/contracts';
 import type { ActiveTabSourceProvider } from '@smartmapper/mia-client';
-
 import {
   ConflictError,
   type CheckpointStore,
-  type StoredCheckpoint,
   type PendingAction,
+  type StoredCheckpoint,
 } from './checkpoints.js';
+import { JobDiagnostics } from './diagnostics.js';
+import type { MappingRegistryStore, MappingScope } from './mapping-registry.js';
 
 export class ApiError extends Error {
   public constructor(
@@ -52,99 +41,27 @@ export class ApiError extends Error {
     super(code);
   }
 }
+
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 
-function controlShape({
-  value: _value,
-  checked: _checked,
-  errors: _errors,
-  requiredSatisfied: _satisfied,
-  rect: _rect,
-  ...shape
-}: PageControl): string {
-  return hash(JSON.stringify(shape));
+function pathMatchesBase(pageUrl: URL, baseUrl: string): boolean {
+  const base = new URL(baseUrl);
+  if (pageUrl.origin !== base.origin) return false;
+  const path = base.pathname.replace(/\/+$/, '') || '/';
+  return path === '/' || pageUrl.pathname === path || pageUrl.pathname.startsWith(`${path}/`);
 }
 
-function skippedElements(page: PageObservation, checkpoint: StoredCheckpoint['value']): string[] {
-  return page.controls
-    .filter(
-      (control) =>
-        !controlIsHumanOnly(control) &&
-        checkpoint.skippedControls?.some(
-          (item) => item.key === control.key && item.shape === controlShape(control),
-        ),
-    )
-    .map((control) => control.elementId);
-}
-
-function pageShape(page: PageObservation): string {
-  return hash(
-    JSON.stringify({
-      document: page.documentId,
-      route: page.routeId,
-      text: page.textFingerprint,
-      headings: page.headings,
-      controls: page.controls.map(
-        ({
-          value: _value,
-          checked: _checked,
-          errors: _errors,
-          requiredSatisfied: _satisfied,
-          rect: _rect,
-          ...control
-        }) => control,
-      ),
-    }),
-  );
-}
-
-async function batchCompletedPage(
-  page: PageObservation,
-  checkpoint: StoredCheckpoint['value'],
-): Promise<boolean> {
-  if (
-    checkpoint.sourceFormat !== 'pdf' ||
-    checkpoint.plannedShape !== pageShape(page) ||
-    checkpoint.view.reviews.length ||
-    checkpoint.recentResults.some(
-      (receipt) =>
-        receipt.status === 'failed' ||
-        (receipt.status === 'blocked' && receipt.reason !== 'page_changed'),
-    ) ||
-    !pageReadyToAdvance(page)
-  )
-    return false;
-  const controls = page.controls.filter(
-    (control) =>
-      !control.disabled &&
-      !controlIsHumanOnly(control) &&
-      ['input', 'select', 'textarea', 'custom'].includes(control.tag),
-  );
-  if (!controls.length) return false;
-  const skipped = skippedElements(page, checkpoint);
-  for (const control of controls) {
-    if (skipped.includes(control.elementId)) continue;
-    const receipt = checkpoint.audit.findLast(
-      (entry) => entry.key === control.key && entry.status === 'verified',
-    );
-    if (
-      !receipt ||
-      !checkpoint.verifiedControls.includes(control.key) ||
-      receipt.expectedHash !==
-        (await valueDigest(
-          ['checkbox', 'radio'].includes(control.inputType) ? control.checked : control.value,
-        ))
-    )
-      return false;
-  }
-  return true;
+function baseSpecificity(baseUrl: string): number {
+  return (new URL(baseUrl).pathname.replace(/\/+$/, '') || '/').length;
 }
 
 function policyReviewReason(reason: string): FieldReview['reason'] {
   switch (reason) {
     case 'page_changed':
     case 'control_missing':
-      return 'page_changed';
+      return 'changed_target';
+    case 'unknown_option':
+      return 'changed_options';
     case 'authentication_required':
     case 'human_only':
       return 'human_only';
@@ -152,12 +69,23 @@ function policyReviewReason(reason: string): FieldReview['reason'] {
     case 'missing_provenance':
     case 'duplicate_source':
       return 'missing_source';
-    case 'low_confidence':
-      return 'ambiguous_match';
     default:
       return 'unsupported_control';
   }
 }
+
+const skippableReviewReasons = new Set<FieldReview['reason']>([
+  'missing_source',
+  'missing_mapping',
+  'missing_question_context',
+  'ambiguous_match',
+  'read_back_mismatch',
+  'unsupported_control',
+  'changed_target',
+  'changed_options',
+  'source_mismatch',
+  'retry_limit',
+]);
 
 export interface ServiceAccess {
   miaOrigins: ReadonlySet<string>;
@@ -168,64 +96,12 @@ export interface ServiceAccess {
 }
 
 export class ActiveTabJobService {
-  private readonly documents = new Map<
-    string,
-    { id: symbol; value: Promise<QuoteSheet>; expiresAt: number }
-  >();
-
-  private document(
-    jobId: string,
-    checkpoint: StoredCheckpoint['value'],
-  ): Promise<QuoteSheet> | undefined {
-    if (checkpoint.sourceFormat !== 'pdf') return undefined;
-    for (const [key, item] of this.documents)
-      if (item.expiresAt <= Date.now()) this.documents.delete(key);
-    const existing = this.documents.get(jobId);
-    if (existing) return existing.value;
-    if (!this.sources.document) throw new ApiError(503, 'quote_sheet_unavailable');
-    const id = Symbol(jobId);
-    const value = this.sources
-      .document(checkpoint.miaOrigin, checkpoint.sourceToken)
-      .then((input) => {
-        const sheet = QuoteSheetSchema.parse(input);
-        const binding = checkpoint.view.binding;
-        if (
-          sheet.tenantId !== binding.tenantId ||
-          sheet.userId !== binding.userId ||
-          sheet.quoteId !== binding.quoteId ||
-          sheet.revision !== checkpoint.sourceRevision
-        )
-          throw new ApiError(409, 'quote_sheet_changed');
-        return sheet;
-      })
-      .catch((error: unknown) => {
-        if (this.documents.get(jobId)?.id === id) this.documents.delete(jobId);
-        throw error;
-      });
-    if (this.documents.size >= 20) this.documents.delete(this.documents.keys().next().value!);
-    const expiresAt = Math.min(
-      Date.parse(checkpoint.view.binding.expiresAt),
-      Date.now() + 5 * 60_000,
-    );
-    this.documents.set(jobId, {
-      id,
-      value,
-      expiresAt,
-    });
-    setTimeout(
-      () => {
-        if (this.documents.get(jobId)?.id === id) this.documents.delete(jobId);
-      },
-      Math.max(1, expiresAt - Date.now()),
-    ).unref();
-    return value;
-  }
   public constructor(
     private readonly store: CheckpointStore,
     private readonly sources: ActiveTabSourceProvider,
-    private readonly mapper: AiMapperProvider<SmartMapperObservation, SmartMapperPlan>,
-    private readonly verifier: FactVerifier,
+    private readonly registry: MappingRegistryStore,
     private readonly access: ServiceAccess,
+    public readonly diagnostics = new JobDiagnostics(),
   ) {}
 
   private async authorized(
@@ -244,7 +120,7 @@ export class ActiveTabJobService {
     const binding = result.value.view.binding;
     if (Date.parse(binding.expiresAt) <= Date.now()) throw new ApiError(410, 'job_expired');
     if (
-      !this.access.principals.has(binding.tenantId + '/' + binding.userId) ||
+      !this.access.principals.has(`${binding.tenantId}/${binding.userId}`) ||
       !carrierOriginAllowed(
         binding.carrierOrigin,
         this.access.carrierOrigins,
@@ -262,10 +138,20 @@ export class ActiveTabJobService {
     return JobViewSchema.parse(record.value.view);
   }
 
+  private scope(source: SourceAnswers, carrierOrigin: string): MappingScope {
+    return {
+      tenantId: source.tenantId,
+      carrierOrigin,
+      lineOfBusiness: MappingLineOfBusinessSchema.parse(source.formType.toLowerCase()),
+    };
+  }
+
   public async start(input: unknown): Promise<{ job: JobView; token: string }> {
     const request = StartJobSchema.parse(input);
+    const carrierPage = new URL(request.carrierPageUrl);
     if (
       !this.access.miaOrigins.has(request.miaOrigin) ||
+      carrierPage.origin !== request.carrierOrigin ||
       !carrierOriginAllowed(
         request.carrierOrigin,
         this.access.carrierOrigins,
@@ -273,24 +159,61 @@ export class ActiveTabJobService {
       )
     )
       throw new ApiError(403, 'origin_not_allowed');
-    const grant = await this.sources.redeem(request);
+    const grant = await this.diagnostics.stage('authorize', (signal) =>
+      this.sources.redeem(request, signal),
+    );
     const binding = grant.binding;
     if (
-      !this.access.principals.has(binding.tenantId + '/' + binding.userId) ||
+      !this.access.principals.has(`${binding.tenantId}/${binding.userId}`) ||
       binding.carrierOrigin !== request.carrierOrigin ||
       binding.tabId !== request.tabId ||
       Date.parse(binding.expiresAt) > Date.now() + 61 * 60_000 ||
       Date.parse(binding.expiresAt) <= Date.now() ||
       grant.source.tenantId !== binding.tenantId ||
       grant.source.userId !== binding.userId ||
-      grant.source.quoteId !== binding.quoteId ||
-      grant.source.sourceFormat !== request.sourceFormat
+      grant.source.quoteId !== binding.quoteId
     ) {
       await this.sources.revoke(request.miaOrigin, grant.sourceToken);
       throw new ApiError(403, 'grant_binding_mismatch');
     }
+    let mapping: MappingProfile | null;
+    try {
+      const scope = this.scope(grant.source, request.carrierOrigin);
+      if (request.mappingSelection)
+        mapping = await this.registry.get(
+          scope,
+          request.mappingSelection.mappingId,
+          request.mappingSelection.mappingVersion,
+        );
+      else {
+        const active = (await this.registry.list(scope)).filter(
+          (profile) =>
+            profile.status === 'active' &&
+            pathMatchesBase(carrierPage, profile.workflow.carrierBaseUrl),
+        );
+        if (!active.length) throw new ApiError(409, 'mapping_not_trained');
+        const specificity = Math.max(
+          ...active.map((profile) => baseSpecificity(profile.workflow.carrierBaseUrl)),
+        );
+        const best = active.filter(
+          (profile) => baseSpecificity(profile.workflow.carrierBaseUrl) === specificity,
+        );
+        if (best.length !== 1) throw new ApiError(409, 'mapping_workflow_ambiguous');
+        mapping = best[0]!;
+      }
+      if (
+        request.mappingSelection &&
+        (!mapping ||
+          !['testable', 'verified', 'active'].includes(mapping.status) ||
+          !pathMatchesBase(carrierPage, mapping.workflow.carrierBaseUrl))
+      )
+        throw new ApiError(409, 'mapping_not_trained');
+    } catch (error) {
+      await this.sources.revoke(request.miaOrigin, grant.sourceToken).catch(() => undefined);
+      throw error;
+    }
     const partition = hash([binding.tenantId, binding.userId, binding.carrierOrigin].join('\0'));
-    const token = partition + '.' + randomBytes(32).toString('base64url');
+    const token = `${partition}.${randomBytes(32).toString('base64url')}`;
     const view: JobView = {
       version: '2.0',
       jobId: randomUUID(),
@@ -307,7 +230,12 @@ export class ActiveTabJobService {
       miaOrigin: request.miaOrigin,
       sourceToken: grant.sourceToken,
       sourceRevision: grant.source.revision,
-      ...(grant.source.sourceFormat ? { sourceFormat: grant.source.sourceFormat } : {}),
+      mappingId: mapping?.mappingId ?? null,
+      mappingVersion: mapping?.mappingVersion ?? null,
+      completedMappingPageIds: [],
+      verifiedMappingFieldIds: [],
+      verifiedMappingWorkflowControlIds: [],
+      localFieldEvidence: [],
       page: null,
       attempts: {},
       verifiedControls: [],
@@ -317,15 +245,22 @@ export class ActiveTabJobService {
       lastFingerprint: '',
       unchangedCount: 0,
       pending: null,
+      queued: [],
       lastBatchId: null,
+      plannedControls: [],
+      skippedControls: [],
     });
-    const checkpoint = await this.store.read(partition, view.jobId);
-    if (checkpoint) void this.document(view.jobId, checkpoint.value)?.catch(() => undefined);
+    this.diagnostics.bind(view.jobId);
     return { job: view, token };
   }
 
   public async read(jobId: string, token: string): Promise<JobView> {
     return JobViewSchema.parse((await this.authorized(jobId, token)).value.view);
+  }
+
+  public async diagnosticEvents(jobId: string, token: string) {
+    await this.authorized(jobId, token);
+    return { events: this.diagnostics.events(jobId) };
   }
 
   public async pause(jobId: string, token: string): Promise<JobView> {
@@ -334,13 +269,11 @@ export class ActiveTabJobService {
     record.value.pending = null;
     record.value.queued = [];
     record.value.expectedNavigation = false;
-    record.value.reobserve = false;
     return this.save(record.partition, record);
   }
 
   public async cancel(jobId: string, token: string): Promise<void> {
     const record = await this.authorized(jobId, token);
-    this.documents.delete(jobId);
     record.value.view.status = 'blocked';
     record.value.pending = null;
     record.value.queued = [];
@@ -353,14 +286,32 @@ export class ActiveTabJobService {
     }
   }
 
+  private async stillVerified(
+    batch: ActionBatch,
+    observation: ReturnType<typeof ObserveRequestSchema.parse>['observation'],
+    checkpoint: StoredCheckpoint['value'],
+  ): Promise<boolean> {
+    const control = observation.controls.find(
+      (candidate) => candidate.elementId === batch.action.elementId,
+    );
+    if (!control || !checkpoint.verifiedControls.includes(control.key)) return false;
+    const expected = actionExpectedValue(batch.action);
+    if (expected === null) return false;
+    const observed =
+      ['checkbox', 'radio'].includes(control.inputType) ||
+      ['checkbox', 'radio'].includes(control.role)
+        ? control.checked
+        : control.value;
+    return (await valueDigest(observed)) === (await valueDigest(expected));
+  }
+
   public async observe(jobId: string, token: string, input: unknown): Promise<ObserveResponse> {
     const request = ObserveRequestSchema.parse(input);
     const record = await this.authorized(jobId, token);
     const value = record.value;
     if (request.revision !== value.view.revision) throw new ConflictError('revision_conflict');
-    const problem = validatePageBinding(request.observation, value.view.binding);
-    if (problem) throw new ApiError(409, problem);
-    if (!request.observation.screenshot) throw new ApiError(400, 'screenshot_required');
+    const bindingProblem = validatePageBinding(request.observation, value.view.binding);
+    if (bindingProblem) throw new ApiError(409, bindingProblem);
     const pageChanged =
       value.page !== null &&
       (value.page.documentId !== request.observation.documentId ||
@@ -368,31 +319,49 @@ export class ActiveTabJobService {
     const advanced =
       value.expectedNavigation === true &&
       (pageChanged || value.lastFingerprint !== request.observation.fingerprint);
-    const repairPostback =
-      value.reobserve === true && value.page?.routeId === request.observation.routeId;
     if (request.skipElementId) {
-      const control = request.observation.controls.find(
-        (item) => item.elementId === request.skipElementId,
+      const skippedReview = value.view.reviews.find(
+        (review) => review.elementId === request.skipElementId,
       );
-      const review = value.view.reviews.find((item) => item.elementId === request.skipElementId);
+      const skippedControl = request.observation.controls.find(
+        (control) => control.elementId === request.skipElementId,
+      );
       if (
         !request.resume ||
+        value.view.status !== 'human_input' ||
         pageChanged ||
-        !review ||
-        !control ||
-        controlIsHumanOnly(control) ||
-        !['input', 'select', 'textarea', 'custom'].includes(control.tag) ||
-        ['human_only', 'validation_error', 'page_changed'].includes(review.reason)
+        !skippedReview ||
+        !skippableReviewReasons.has(skippedReview.reason) ||
+        !skippedControl
       )
-        throw new ApiError(409, 'field_not_skippable');
+        throw new ApiError(409, 'field_skip_not_allowed');
+      const shape = await stableTargetSignature(skippedControl);
       value.skippedControls = [
-        ...(value.skippedControls ?? []).filter((item) => item.key !== control.key),
-        { key: control.key, shape: controlShape(control) },
-      ].slice(-500);
+        ...(value.skippedControls ?? []).filter(
+          (item) => !(item.routeId === request.observation.routeId && item.shape === shape),
+        ),
+        {
+          key: skippedControl.key,
+          shape,
+          routeId: request.observation.routeId,
+          sourceRevision: value.sourceRevision,
+          reason: skippedReview.reason,
+        },
+      ].slice(-400);
+    }
+    if (value.pendingWorkflowProof?.kind === 'ordinary_next') {
+      if (advanced)
+        value.verifiedMappingWorkflowControlIds = [
+          ...new Set([
+            ...(value.verifiedMappingWorkflowControlIds ?? []),
+            value.pendingWorkflowProof.workflowControlId,
+          ]),
+        ];
+      delete value.pendingWorkflowProof;
     }
     if (
       !request.resume &&
-      ((pageChanged && !advanced && !repairPostback) ||
+      ((pageChanged && !advanced) ||
         (value.expectedNavigation && !advanced) ||
         !['ready', 'running'].includes(value.view.status))
     ) {
@@ -402,56 +371,29 @@ export class ActiveTabJobService {
       return { job: await this.save(record.partition, record), batch: null };
     }
     if (pageChanged || advanced) {
-      value.skippedControls = [];
       value.attempts = {};
       value.verifiedControls = [];
-      value.actionCount = 0;
-      value.unchangedCount = 0;
       value.recentResults = [];
       value.pagePasses = 0;
+      value.plannedControls = [];
+      value.skippedControls = [];
     }
     if (advanced) value.completedPages = (value.completedPages ?? 0) + 1;
     value.expectedNavigation = false;
-    value.reobserve = false;
-    value.wholePage = !!request.observation.capture;
-    value.pagePasses = request.resume ? 1 : (value.pagePasses ?? 0) + 1;
     value.page = {
       documentId: request.observation.documentId,
       routeId: request.observation.routeId,
     };
-    value.unchangedCount =
-      value.lastFingerprint === request.observation.fingerprint ? value.unchangedCount + 1 : 0;
     value.lastFingerprint = request.observation.fingerprint;
     value.pending = null;
     value.queued = [];
-    const completedLocally =
-      !request.resume && (await batchCompletedPage(request.observation, value));
-    const skipped = skippedElements(request.observation, value);
-    value.view.reviews = [];
-    if (
-      value.actionCount >= 150 ||
-      value.unchangedCount >= 12 ||
-      (value.wholePage && value.pagePasses > 8)
-    ) {
-      value.view.status = 'human_input';
-      value.view.reviews = [
-        { elementId: null, question: 'Page needs review', entity: '', reason: 'retry_limit' },
-      ];
-      return { job: await this.save(record.partition, record), batch: null };
-    }
     value.view.status = 'planning';
+    value.view.reviews = [];
     await this.save(record.partition, record);
     const planning = await this.authorized(jobId, token);
-    if (
-      planning.value.view.revision !== value.view.revision ||
-      planning.value.view.status !== 'planning'
-    )
-      throw new ConflictError('planning_interrupted');
     try {
-      const source = await this.sources.read(
-        value.miaOrigin,
-        value.sourceToken,
-        value.sourceFormat,
+      const source = await this.diagnostics.stage('source', (signal) =>
+        this.sources.read(value.miaOrigin, value.sourceToken, signal),
       );
       if (
         source.tenantId !== value.view.binding.tenantId ||
@@ -459,8 +401,7 @@ export class ActiveTabJobService {
         source.quoteId !== value.view.binding.quoteId
       )
         throw new ApiError(403, 'source_binding_mismatch');
-      if (source.revision !== value.sourceRevision || source.sourceFormat !== value.sourceFormat) {
-        this.documents.delete(jobId);
+      if (source.revision !== value.sourceRevision) {
         planning.value.view.status = 'human_input';
         planning.value.view.reviews = [
           {
@@ -472,167 +413,292 @@ export class ActiveTabJobService {
         ];
         return { job: await this.save(planning.partition, planning), batch: null };
       }
-      const document = await this.document(jobId, value);
-      const proposal = SmartMapperPlanSchema.parse(
-        completedLocally
-          ? {
-              version: '2.0',
-              pageStateId: request.observation.pageStateId,
-              outcome: 'page_complete',
-              actions: [],
-              reviews: [],
-            }
-          : await this.mapper.proposeMappings({
-              page: request.observation,
-              source,
-              ...(document ? { document } : {}),
-              attempts: value.attempts,
-              recentResults: value.recentResults,
-              verifiedControls: value.verifiedControls,
-              skippedElementIds: skipped,
-              conversation: request.conversation,
-            }),
+      const scope = this.scope(source, value.view.binding.carrierOrigin);
+      const candidates = planning.value.mappingId
+        ? [
+            await this.registry.get(
+              scope,
+              planning.value.mappingId,
+              planning.value.mappingVersion ?? undefined,
+            ),
+          ].filter((profile) => profile !== null)
+        : (await this.registry.list(scope)).filter((profile) => profile.status === 'active');
+      if (!candidates.length || candidates.some((profile) => profile.status === 'archived'))
+        throw new ApiError(409, 'mapping_unavailable');
+      const proposals = await this.diagnostics.stage('plan', () =>
+        Promise.all(
+          candidates.map(async (profile) => ({
+            profile,
+            compiled: await compileRegistryPage(profile, request.observation, source),
+          })),
+        ),
       );
-      planning.value.plannedShape = pageShape(request.observation);
-      if (proposal.documentAnswers && !document)
-        throw new ApiError(502, 'unexpected_document_citations');
-      if (document) {
-        source.answers = documentSources(proposal, document);
-        if (new Set(source.answers.map((answer) => answer.answerId)).size !== source.answers.length)
-          throw new ApiError(502, 'duplicate_document_citation');
-      }
-      proposal.actions.sort((a, b) => {
-        const first = request.observation.controls.find(
-          (control) => control.elementId === a.elementId,
-        )?.rect;
-        const second = request.observation.controls.find(
-          (control) => control.elementId === b.elementId,
-        )?.rect;
-        return first && second ? first.y - second.y || first.x - second.x : 0;
-      });
-      if (
-        proposal.pageStateId !== request.observation.pageStateId ||
-        (proposal.outcome === 'act') !== proposal.actions.length > 0
-      )
-        throw new ApiError(502, 'invalid_plan');
-      if (proposal.actions.some((action) => action.type === 'next_page'))
-        throw new ApiError(502, 'model_navigation_not_allowed');
-      // A human skip is enforced even if the planner ignores it. Validation and final-action
-      // checks still inspect the original page; skipping does not approve missing required data.
-      proposal.actions = proposal.actions.filter(
-        (action) => !action.elementId || !skipped.includes(action.elementId),
-      );
-      proposal.reviews = proposal.reviews.filter(
-        (review) =>
-          !review.elementId ||
-          !skipped.includes(review.elementId) ||
-          ['human_only', 'validation_error', 'page_changed'].includes(review.reason),
-      );
-      if (proposal.outcome === 'act' && !proposal.actions.length) proposal.outcome = 'human_input';
-      // Page-derived text never enters durable checkpoints.
-      planning.value.view.reviews = proposal.reviews.map((item) => ({
-        ...item,
-        question: 'Field needs review',
-        entity: '',
-      }));
-      let action = proposal.actions[0];
-      if (!action) {
-        for (const control of request.observation.controls) {
-          if (control.disabled || controlIsHumanOnly(control)) continue;
-          const empty =
-            control.inputType === 'checkbox'
-              ? !control.checked
-              : control.inputType === 'radio'
-                ? !request.observation.controls.some(
-                    (other) =>
-                      other.section === control.section &&
-                      other.inputType === 'radio' &&
-                      other.checked,
-                  )
-                : !control.value;
-          if (
-            (control.required && !(control.requiredSatisfied ?? !empty)) ||
-            control.errors.length
-          ) {
-            if (!planning.value.view.reviews.some((item) => item.elementId === control.elementId))
-              planning.value.view.reviews.push({
-                elementId: control.elementId,
-                question: 'Field needs review',
-                entity: '',
-                reason: control.errors.length ? 'validation_error' : 'missing_source',
-              });
-          }
+      const viable = proposals.filter((proposal) => proposal.compiled.mappingPage !== null);
+      const selected =
+        candidates.length === 1 ? proposals[0]! : viable.length === 1 ? viable[0]! : null;
+      if (!selected) throw new ApiError(409, 'mapping_workflow_ambiguous');
+      const { profile: mapping, compiled } = selected;
+      planning.value.mappingId = mapping.mappingId;
+      planning.value.mappingVersion = mapping.mappingVersion;
+      const workflowProof = planning.value.pendingWorkflowProof;
+      if (workflowProof?.kind === 'add_entity') {
+        const expectedField = compiled.mappingPage?.fields.find(
+          (field) => field.fieldId === workflowProof.expectedMappingFieldId,
+        );
+        let targetObserved = false;
+        if (expectedField && request.observation.fingerprint !== workflowProof.beforeFingerprint) {
+          const matching: typeof request.observation.controls = [];
+          for (const control of request.observation.controls)
+            if ((await stableTargetSignature(control)) === expectedField.target.signature)
+              matching.push(control);
+          targetObserved = matching[expectedField.target.occurrence] !== undefined;
         }
-        planning.value.view.reviews = planning.value.view.reviews.slice(0, 95);
-        planning.value.view.status =
-          proposal.outcome === 'page_complete' &&
-          !proposal.reviews.length &&
-          !request.observation.errors.length &&
-          !request.observation.unsupportedFrames &&
-          !request.observation.omittedControls &&
-          request.observation.capture?.complete !== false &&
-          !request.observation.capture?.unexpanded &&
-          !planning.value.view.reviews.length
-            ? 'page_complete'
-            : 'human_input';
-        if (request.observation.unsupportedFrames)
+        if (targetObserved)
+          planning.value.verifiedMappingWorkflowControlIds = [
+            ...new Set([
+              ...(planning.value.verifiedMappingWorkflowControlIds ?? []),
+              workflowProof.workflowControlId,
+            ]),
+          ];
+        delete planning.value.pendingWorkflowProof;
+      }
+      const skippedElementIds = new Set<string>();
+      for (const control of request.observation.controls) {
+        const candidates = (planning.value.skippedControls ?? []).filter(
+          (item) =>
+            item.routeId === request.observation.routeId &&
+            item.sourceRevision === planning.value.sourceRevision &&
+            item.key === control.key,
+        );
+        const shape = candidates.length ? await stableTargetSignature(control) : null;
+        if (shape && candidates.some((item) => item.shape === shape))
+          skippedElementIds.add(control.elementId);
+      }
+      planning.value.view.reviews = compiled.reviews.filter(
+        (review) => !review.elementId || !skippedElementIds.has(review.elementId),
+      );
+      for (const evidence of compiled.locallyVerifiedFields) {
+        if (skippedElementIds.has(evidence.elementId)) continue;
+        const control = request.observation.controls.find(
+          (candidate) => candidate.elementId === evidence.elementId,
+        );
+        if (!control) continue;
+        const observed =
+          ['checkbox', 'radio'].includes(control.inputType) ||
+          ['checkbox', 'radio'].includes(control.role)
+            ? control.checked
+            : control.value;
+        const localEvidence = {
+          mappingFieldId: evidence.mappingFieldId,
+          key: control.key,
+          observedHash: await valueDigest(observed),
+          kind: evidence.kind,
+          sourceRevision: planning.value.sourceRevision,
+        };
+        planning.value.localFieldEvidence = [
+          ...(planning.value.localFieldEvidence ?? []).filter(
+            (item) => item.mappingFieldId !== evidence.mappingFieldId,
+          ),
+          localEvidence,
+        ].slice(-400);
+        planning.value.verifiedMappingFieldIds = [
+          ...new Set([...(planning.value.verifiedMappingFieldIds ?? []), evidence.mappingFieldId]),
+        ];
+      }
+      const batches: ActionBatch[] = [];
+      const pending: PendingAction[] = [];
+      const synthetic = new Map<string, SourceAnswer>();
+      for (const item of compiled.actions)
+        for (const answer of item.sources) synthetic.set(answer.answerId, answer);
+      const policySource: SourceAnswers = {
+        ...source,
+        answers: [
+          ...source.answers,
+          ...[...synthetic.values()].filter(
+            (answer) =>
+              !source.answers.some((sourceAnswer) => sourceAnswer.answerId === answer.answerId),
+          ),
+        ],
+      };
+      for (const item of compiled.actions) {
+        if (item.action.elementId && skippedElementIds.has(item.action.elementId)) continue;
+        const provisional: ActionBatch = {
+          batchId: randomUUID(),
+          action: item.action,
+          sources: item.sources,
+        };
+        if (await this.stillVerified(provisional, request.observation, planning.value)) continue;
+        const policy = evaluateActiveTabAction(item.action, request.observation, policySource);
+        if (!policy.allowed) {
+          planning.value.view.reviews.push({
+            elementId: item.action.elementId,
+            question: 'Carrier field needs review',
+            entity: '',
+            reason: policyReviewReason(policy.reason),
+          });
+          continue;
+        }
+        const control = policy.control;
+        const key = control?.key ?? '__page__';
+        if ((planning.value.attempts[key] ?? 0) >= 3) {
+          planning.value.view.reviews.push({
+            elementId: item.action.elementId,
+            question: 'Carrier field needs review',
+            entity: '',
+            reason: 'retry_limit',
+          });
+          continue;
+        }
+        const expected = actionExpectedValue(item.action);
+        const batchId = provisional.batchId;
+        batches.push({ batchId, action: item.action, sources: policy.sources });
+        pending.push({
+          batchId,
+          actionId: item.action.actionId,
+          elementId: item.action.elementId,
+          key,
+          expectedHash: expected === null ? null : await valueDigest(expected),
+          sourceAnswerIds: item.action.sourceAnswerIds,
+          transformation: item.action.transformation.kind,
+          transformationHash: hash(item.action.transformation.explanation),
+          actionType: item.action.type,
+          navigation: false,
+          mappingFieldId: item.mappingFieldId,
+          ...(compiled.mappingPage ? { mappingPageId: compiled.mappingPage.pageId } : {}),
+        });
+      }
+      planning.value.view.reviews = planning.value.view.reviews.slice(0, 100);
+      if (!batches.length) {
+        const expandable = compiled.missingTargets.find((missing) => {
+          const limit = mapping.entityLimits.find((candidate) =>
+            missing.sourcePathPatterns.some((pattern) => {
+              const family = candidate.sourcePattern.split('*')[0] ?? '';
+              return !!family && pattern.startsWith(family);
+            }),
+          );
+          return !!limit && missing.repeatIndex < limit.maximumCount;
+        });
+        if (expandable && compiled.mappingPage) {
+          const limit = mapping.entityLimits.find((candidate) =>
+            expandable.sourcePathPatterns.some((pattern) => {
+              const family = candidate.sourcePattern.split('*')[0] ?? '';
+              return !!family && pattern.startsWith(family);
+            }),
+          );
+          const trainedAdd = compiled.mappingPage.workflowControls.find(
+            (control) => control.kind === 'add_entity' && control.entityType === limit?.entityType,
+          );
+          if (trainedAdd) {
+            const matching = [];
+            for (const control of request.observation.controls)
+              if ((await stableTargetSignature(control)) === trainedAdd.target.signature)
+                matching.push(control);
+            const addControl = matching[trainedAdd.target.occurrence];
+            const sources = expandable.sourceAnswerIds
+              .map((answerId) => source.answers.find((answer) => answer.answerId === answerId))
+              .filter(
+                (answer): answer is SourceAnswer =>
+                  !!answer && answer.status === 'answered' && answer.value !== null,
+              );
+            if (
+              addControl &&
+              !addControl.disabled &&
+              sources.length &&
+              (planning.value.attempts[addControl.key] ?? 0) < (limit?.maximumCount ?? 0)
+            ) {
+              const action = {
+                version: '2.0' as const,
+                actionId: randomUUID(),
+                type: 'click' as const,
+                pageStateId: request.observation.pageStateId,
+                elementId: addControl.elementId,
+                sourceAnswerIds: sources.map((answer) => answer.answerId),
+                value: null,
+                checked: null,
+                key: null,
+                purpose: 'add_entity' as const,
+                direction: null,
+                milliseconds: null,
+                transformation: {
+                  kind: 'identity' as const,
+                  explanation: `Trained bounded add ${limit?.entityType ?? 'entity'} control.`,
+                },
+                confidence: 1,
+              };
+              const policy = evaluateActiveTabAction(action, request.observation, source);
+              if (policy.allowed) {
+                const batchId = randomUUID();
+                planning.value.pending = {
+                  batchId,
+                  actionId: action.actionId,
+                  elementId: action.elementId,
+                  key: addControl.key,
+                  expectedHash: null,
+                  sourceAnswerIds: action.sourceAnswerIds,
+                  transformation: 'identity',
+                  transformationHash: hash(action.transformation.explanation),
+                  actionType: 'click',
+                  navigation: false,
+                  mappingPageId: compiled.mappingPage.pageId,
+                  mappingWorkflowControlId: trainedAdd.workflowControlId,
+                  mappingWorkflowControlKind: 'add_entity',
+                  expectedMappingFieldId: expandable.mappingFieldId,
+                };
+                planning.value.view.status = 'executing';
+                return {
+                  job: await this.save(planning.partition, planning),
+                  batch: { batchId, action, sources: policy.sources },
+                };
+              }
+            }
+          }
           planning.value.view.reviews.push({
             elementId: null,
-            question: 'Embedded form needs review',
-            entity: '',
-            reason: 'unsupported_control',
+            question: 'A repeated carrier row could not be added',
+            entity: limit?.entityType ?? '',
+            reason: expandable.sourceAnswerIds.some((answerId) =>
+              source.answers.some(
+                (answer) =>
+                  answer.answerId === answerId &&
+                  answer.status === 'answered' &&
+                  answer.value !== null,
+              ),
+            )
+              ? 'changed_target'
+              : 'missing_source',
           });
-        if (request.observation.omittedControls)
-          planning.value.view.reviews.push({
-            elementId: null,
-            question: 'Some controls could not be inspected',
-            entity: '',
-            reason: 'unsupported_control',
-          });
-        if (
-          request.observation.capture?.complete === false ||
-          request.observation.capture?.unexpanded
-        )
-          planning.value.view.reviews.push({
-            elementId: null,
-            question: 'Some page sections could not be inspected',
-            entity: '',
-            reason: 'unsupported_control',
-          });
-        if (request.observation.errors.length)
-          planning.value.view.reviews.push({
-            elementId: null,
-            question: 'Carrier validation needs review',
-            entity: '',
-            reason: 'validation_error',
-          });
-        const nextControls = request.observation.controls.filter(
-          (control) => control.ordinaryNext && !control.disabled,
+        }
+        const clean =
+          !planning.value.view.reviews.length && pageReadyToAdvance(request.observation);
+        if (clean && compiled.mappingPage)
+          planning.value.completedMappingPageIds = [
+            ...new Set([
+              ...(planning.value.completedMappingPageIds ?? []),
+              compiled.mappingPage.pageId,
+            ]),
+          ];
+        const mappedNext = compiled.mappingPage?.workflowControls.filter(
+          (control) => control.kind === 'ordinary_next',
         );
         if (
-          planning.value.view.status === 'page_complete' &&
+          clean &&
           this.access.autoNext &&
-          nextControls.length
+          mappedNext?.length === 1 &&
+          (value.completedPages ?? 0) < 20
         ) {
-          if (
-            nextControls.length !== 1 ||
-            !pageReadyToAdvance(request.observation) ||
-            (value.completedPages ?? 0) >= 20
-          ) {
-            planning.value.view.status = 'human_input';
-            planning.value.view.reviews.push({
-              elementId: null,
-              question: 'Review the page before continuing',
-              entity: '',
-              reason: 'human_only',
-            });
-          } else {
-            action = {
-              version: '2.0',
+          const descriptor = mappedNext[0]!;
+          const matching = [];
+          for (const control of request.observation.controls)
+            if ((await stableTargetSignature(control)) === descriptor.target.signature)
+              matching.push(control);
+          const next = matching[descriptor.target.occurrence];
+          if (next?.ordinaryNext && !next.disabled) {
+            const action = {
+              version: '2.0' as const,
               actionId: randomUUID(),
+              type: 'next_page' as const,
               pageStateId: request.observation.pageStateId,
-              type: 'next_page',
-              elementId: nextControls[0]!.elementId,
+              elementId: next.elementId,
               sourceAnswerIds: [],
               value: null,
               checked: null,
@@ -641,99 +707,49 @@ export class ActiveTabJobService {
               direction: null,
               milliseconds: null,
               transformation: {
-                kind: 'identity',
-                explanation: 'Ordinary next page after a complete page review.',
+                kind: 'identity' as const,
+                explanation: 'Trained ordinary Next/Continue after clean local review.',
               },
               confidence: 1,
             };
-            proposal.actions = [action];
+            const policy = evaluateActiveTabAction(action, request.observation, source);
+            if (policy.allowed) {
+              const batchId = randomUUID();
+              planning.value.pending = {
+                batchId,
+                actionId: action.actionId,
+                elementId: action.elementId,
+                key: next.key,
+                expectedHash: null,
+                sourceAnswerIds: [],
+                transformation: 'identity',
+                transformationHash: hash(action.transformation.explanation),
+                actionType: 'next_page',
+                navigation: true,
+                mappingWorkflowControlId: descriptor.workflowControlId,
+                mappingWorkflowControlKind: 'ordinary_next',
+                ...(compiled.mappingPage ? { mappingPageId: compiled.mappingPage.pageId } : {}),
+              };
+              planning.value.view.status = 'executing';
+              return {
+                job: await this.save(planning.partition, planning),
+                batch: { batchId, action, sources: [] },
+              };
+            }
           }
         }
-        if (!action) return { job: await this.save(planning.partition, planning), batch: null };
-      }
-      const entries: FactVerificationEntry[] = [];
-      const batches: ActionBatch[] = [];
-      const pending: PendingAction[] = [];
-      const reviews: FieldReview[] = [];
-      const reject = (elementId: string | null, reason: FieldReview['reason']) =>
-        reviews.push({ elementId, question: 'Field needs review', entity: '', reason });
-      if (!sectionActionsAllowed(proposal.actions, request.observation))
-        reject(null, 'unsupported_control');
-      if (value.actionCount + proposal.actions.length > 150) reject(null, 'retry_limit');
-      for (const candidate of proposal.actions) {
-        if (proposal.reviews.some((review) => review.elementId === candidate.elementId)) {
-          reject(candidate.elementId, 'ambiguous_match');
-          continue;
-        }
-        const policy = evaluateActiveTabAction(candidate, request.observation, source);
-        if (!policy.allowed) {
-          reject(candidate.elementId, policyReviewReason(policy.reason));
-          continue;
-        }
-        const key = policy.control?.key ?? '__page__';
-        if ((value.attempts[key] ?? 0) >= 5) reject(candidate.elementId, 'retry_limit');
-        if (changesAnswer(candidate)) {
-          if (!policy.control) reject(candidate.elementId, 'unsupported_control');
-          else if (!directRepresentationMatches(candidate, policy.sources))
-            reject(candidate.elementId, 'source_mismatch');
-          else
-            entries.push({ action: candidate, control: policy.control, sources: policy.sources });
-        }
-        const expected = actionExpectedValue(candidate);
-        const batchId = randomUUID();
-        batches.push({ batchId, action: candidate, sources: policy.sources });
-        pending.push({
-          batchId,
-          actionId: candidate.actionId,
-          key,
-          expectedHash: expected === null ? null : await valueDigest(expected),
-          sourceAnswerIds: candidate.sourceAnswerIds,
-          transformation: candidate.transformation.kind,
-          transformationHash: hash(candidate.transformation.explanation),
-          navigation: candidate.type === 'next_page',
-        });
-      }
-      if (entries.length && !reviews.some((review) => review.elementId === null)) {
-        const first = entries[0]!;
-        const verifications =
-          entries.length === 1
-            ? [
-                await this.verifier.verify(
-                  first.action,
-                  first.control,
-                  first.sources,
-                  request.observation,
-                  document,
-                ),
-              ]
-            : await this.verifier.verifySection(entries, request.observation, document);
-        if (verifications.length !== entries.length)
-          throw new ApiError(502, 'invalid_verification');
-        verifications.forEach((verification, index) => {
-          if (!verification.approved) reject(entries[index]!.action.elementId, verification.reason);
-        });
-      }
-      const approvedIndices = batches.flatMap((batch, index) =>
-        reviews.some(
-          (review) => review.elementId === null || review.elementId === batch.action.elementId,
-        )
-          ? []
-          : [index],
-      );
-      planning.value.view.reviews = [...planning.value.view.reviews, ...reviews].slice(0, 100);
-      if (!approvedIndices.length) {
-        planning.value.view.status = 'human_input';
+        planning.value.view.status = planning.value.view.reviews.length
+          ? 'human_input'
+          : 'page_complete';
         return { job: await this.save(planning.partition, planning), batch: null };
       }
-      const approvedPending = approvedIndices.map((index) => pending[index]!);
-      const approvedBatches = approvedIndices.map((index) => batches[index]!);
-      planning.value.pending = approvedPending[0]!;
-      planning.value.queued = approvedPending.slice(1);
+      planning.value.pending = pending[0]!;
+      planning.value.queued = pending.slice(1);
       planning.value.view.status = 'executing';
       return {
         job: await this.save(planning.partition, planning),
-        batch: approvedBatches[0]!,
-        ...(approvedBatches.length > 1 ? { followingBatches: approvedBatches.slice(1) } : {}),
+        batch: batches[0]!,
+        ...(batches.length > 1 ? { followingBatches: batches.slice(1) } : {}),
       };
     } catch (error) {
       if (error instanceof ConflictError) throw error;
@@ -743,43 +759,6 @@ export class ActiveTabJobService {
       await this.save(planning.partition, planning);
       throw error;
     }
-  }
-
-  public async chat(jobId: string, token: string, input: unknown): Promise<MappingChatResponse> {
-    const request = MappingChatRequestSchema.parse(input);
-    const record = await this.authorized(jobId, token);
-    const value = record.value;
-    if (request.revision !== value.view.revision || value.view.status !== 'paused')
-      throw new ConflictError('pause_before_chat');
-    const problem = validatePageBinding(request.observation, value.view.binding);
-    if (problem) throw new ApiError(409, problem);
-    if (!request.observation.screenshot) throw new ApiError(400, 'screenshot_required');
-    if (!this.mapper.discussMapping) throw new ApiError(503, 'chat_unavailable');
-    // Claim a revision without persisting chat text, source answers or screenshots.
-    await this.save(record.partition, record);
-    const source = await this.sources.read(value.miaOrigin, value.sourceToken, value.sourceFormat);
-    if (
-      source.tenantId !== value.view.binding.tenantId ||
-      source.userId !== value.view.binding.userId ||
-      source.quoteId !== value.view.binding.quoteId
-    )
-      throw new ApiError(403, 'source_binding_mismatch');
-    if (source.revision !== value.sourceRevision || source.sourceFormat !== value.sourceFormat)
-      throw new ApiError(409, 'source_changed');
-    const document = await this.document(jobId, value);
-    const response = MappingChatReplySchema.parse(
-      await this.mapper.discussMapping({
-        page: request.observation,
-        source,
-        ...(document ? { document } : {}),
-        conversation: request.conversation,
-        recentResults: value.recentResults,
-      }),
-    );
-    const latest = await this.authorized(jobId, token);
-    if (latest.value.view.revision !== value.view.revision || latest.value.view.status !== 'paused')
-      throw new ConflictError('chat_interrupted');
-    return { job: await this.save(latest.partition, latest), response };
   }
 
   public async receipt(jobId: string, token: string, input: unknown): Promise<JobView> {
@@ -796,12 +775,8 @@ export class ActiveTabJobService {
       throw new ConflictError('receipt_conflict');
     const pending = value.pending;
     const result = request.receipt;
-    const reobserve =
-      value.wholePage === true && result.status === 'blocked' && result.reason === 'page_changed';
-    if (!reobserve) {
-      value.attempts[pending.key] = (value.attempts[pending.key] ?? 0) + 1;
-      value.actionCount += 1;
-    }
+    value.attempts[pending.key] = (value.attempts[pending.key] ?? 0) + 1;
+    value.actionCount += 1;
     const success =
       pending.expectedHash === null
         ? result.status === 'executed'
@@ -809,13 +784,13 @@ export class ActiveTabJobService {
           result.observedHash === pending.expectedHash;
     value.recentResults = [
       ...value.recentResults.slice(-9),
-      success || reobserve ? result : { ...result, status: 'failed', reason: 'read_back_mismatch' },
+      success ? result : { ...result, status: 'failed', reason: 'read_back_mismatch' },
     ];
     value.audit = [
       ...value.audit.slice(-149),
       {
         ...pending,
-        status: success ? 'verified' : reobserve ? 'page_changed' : 'failed',
+        status: success ? 'verified' : 'failed',
         observedHash: result.observedHash,
         sourceRevision: value.sourceRevision,
       },
@@ -823,18 +798,37 @@ export class ActiveTabJobService {
     if (success && pending.expectedHash !== null) {
       value.view.verified += 1;
       value.verifiedControls = [...new Set([...value.verifiedControls, pending.key])].slice(-400);
-    } else if (!success && !reobserve) value.view.failed += 1;
+      if (pending.mappingFieldId)
+        value.verifiedMappingFieldIds = [
+          ...new Set([...(value.verifiedMappingFieldIds ?? []), pending.mappingFieldId]),
+        ];
+    }
+    if (success && pending.mappingWorkflowControlId && pending.mappingWorkflowControlKind)
+      value.pendingWorkflowProof = {
+        workflowControlId: pending.mappingWorkflowControlId,
+        kind: pending.mappingWorkflowControlKind,
+        beforeFingerprint: value.lastFingerprint,
+        ...(pending.expectedMappingFieldId
+          ? { expectedMappingFieldId: pending.expectedMappingFieldId }
+          : {}),
+      };
+    if (!success) {
+      value.view.failed += 1;
+      value.view.reviews.push({
+        elementId: pending.elementId ?? null,
+        question: 'Carrier field needs review',
+        entity: '',
+        reason: result.reason === 'validation_error' ? 'validation_error' : 'read_back_mismatch',
+      });
+    }
     value.lastBatchId = request.batchId;
-    if (!success) value.queued = [];
     value.pending = value.queued?.shift() ?? null;
     value.expectedNavigation = success && pending.navigation === true;
-    value.reobserve = reobserve;
-    value.view.status =
-      result.status === 'blocked' && !value.reobserve
-        ? 'paused'
-        : value.pending
-          ? 'executing'
-          : 'running';
+    value.view.status = value.pending
+      ? 'executing'
+      : value.view.reviews.length
+        ? 'human_input'
+        : 'running';
     return this.save(record.partition, record);
   }
 }

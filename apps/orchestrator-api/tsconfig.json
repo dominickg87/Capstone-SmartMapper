@@ -11,7 +11,6 @@
     { "path": "../../packages/contracts" },
     { "path": "../../packages/observability" },
     { "path": "../../packages/automation-core" },
-    { "path": "../../packages/ai-mapper" },
     { "path": "../../packages/mia-client" }
   ]
 }

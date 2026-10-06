@@ -5,12 +5,19 @@ import type { ActionReceipt, JobView } from '@smartmapper/contracts';
 export interface PendingAction {
   batchId: string;
   actionId: string;
+  elementId?: string | null;
   key: string;
   expectedHash: string | null;
   sourceAnswerIds: string[];
   transformation: string;
   transformationHash: string;
+  actionType?: 'fill' | 'select' | 'check' | 'click' | 'key' | 'scroll' | 'wait' | 'next_page';
   navigation?: boolean;
+  mappingFieldId?: string;
+  mappingPageId?: string;
+  mappingWorkflowControlId?: string;
+  mappingWorkflowControlKind?: 'ordinary_next' | 'add_entity';
+  expectedMappingFieldId?: string;
 }
 
 export interface Checkpoint {
@@ -19,7 +26,24 @@ export interface Checkpoint {
   miaOrigin: string;
   sourceToken: string;
   sourceRevision: string;
-  sourceFormat?: 'pdf';
+  mappingId: string | null;
+  mappingVersion: number | null;
+  completedMappingPageIds?: string[];
+  verifiedMappingFieldIds?: string[];
+  verifiedMappingWorkflowControlIds?: string[];
+  localFieldEvidence?: {
+    mappingFieldId: string;
+    key: string;
+    observedHash: string;
+    kind: 'carrier_default';
+    sourceRevision: string;
+  }[];
+  pendingWorkflowProof?: {
+    workflowControlId: string;
+    kind: 'ordinary_next' | 'add_entity';
+    beforeFingerprint: string;
+    expectedMappingFieldId?: string;
+  };
   page: { documentId: string; routeId: string } | null;
   attempts: Record<string, number>;
   verifiedControls: string[];
@@ -46,8 +70,14 @@ export interface Checkpoint {
   expectedNavigation?: boolean;
   completedPages?: number;
   pagePasses?: number;
-  plannedShape?: string;
-  skippedControls?: { key: string; shape: string }[];
+  plannedControls?: { key: string; expectedHash: string }[];
+  skippedControls?: {
+    key: string;
+    shape: string;
+    routeId: string;
+    sourceRevision: string;
+    reason: string;
+  }[];
 }
 
 export interface StoredCheckpoint {

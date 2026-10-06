@@ -113,9 +113,6 @@ importers:
       '@azure/identity':
         specifier: ^4.13.3
         version: 4.13.3
-      '@smartmapper/ai-mapper':
-        specifier: workspace:*
-        version: link:../../packages/ai-mapper
       '@smartmapper/automation-core':
         specifier: workspace:*
         version: link:../../packages/automation-core
@@ -133,21 +130,6 @@ importers:
         version: 3.16.0
       zod:
         specifier: ^4.4.3
-        version: 4.4.3
-
-  packages/ai-mapper:
-    dependencies:
-      '@azure/identity':
-        specifier: ^4.13.3
-        version: 4.13.3
-      '@smartmapper/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      openai:
-        specifier: ^7.25.0
-        version: 7.25.0(zod@4.4.3)
-      zod:
-        specifier: ^4.1.5
         version: 4.4.3
 
   packages/automation-core:
@@ -2836,33 +2818,6 @@ packages:
       }
     engines: { node: '>=18' }
 
-  openai@7.25.0:
-    resolution:
-      {
-        integrity: sha512-cnk0d4QT58Vq0vl2KG+DCa/C2+cXthsK2rUeaqtprq33mKv9dlX8o7fWSS283wa2IE/aVdsRyX1+Dqwz551olg==,
-      }
-    engines: { node: '>=22.0.0' }
-    peerDependencies:
-      '@aws-sdk/credential-provider-node': '>=3.972.0 <4'
-      '@smithy/hash-node': '>=4.3.0 <5'
-      '@smithy/signature-v4': '>=5.4.0 <6'
-      undici: '>=5 <9'
-      ws: ^8.21.0
-      zod: ^3.25 || ^4.0
-    peerDependenciesMeta:
-      '@aws-sdk/credential-provider-node':
-        optional: true
-      '@smithy/hash-node':
-        optional: true
-      '@smithy/signature-v4':
-        optional: true
-      undici:
-        optional: true
-      ws:
-        optional: true
-      zod:
-        optional: true
-
   optionator@0.9.4:
     resolution:
       {
@@ -5242,10 +5197,6 @@ snapshots:
       define-lazy-prop: 3.0.0
       is-inside-container: 1.0.0
       wsl-utils: 0.1.0
-
-  openai@7.25.0(zod@4.4.3):
-    optionalDependencies:
-      zod: 4.4.3
 
   optionator@0.9.4:
     dependencies:

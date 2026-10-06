@@ -1,15 +1,19 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createRequire } from 'node:module';
-import { ZodError } from 'zod';
+import { ZodError, z } from 'zod';
 import { ApiError, type ActiveTabJobService } from './active-tab-service.js';
 import { ConflictError } from './checkpoints.js';
+import { diagnosticCode } from '@smartmapper/contracts';
+import { untilAborted } from './diagnostics.js';
+import type { TrainingService } from './training-service.js';
 
 const { version: buildVersion } = createRequire(import.meta.url)('../package.json') as {
   version: string;
 };
 
 function send(response: ServerResponse, status: number, body: unknown): void {
+  if (response.writableEnded || response.destroyed) return;
   response.writeHead(status, {
     'content-type': 'application/json',
     'cache-control': 'no-store',
@@ -40,6 +44,8 @@ export function createApi(
   service: ActiveTabJobService,
   origins: ReadonlySet<string>,
   metric: (status: number) => void = () => undefined,
+  operationTimeoutMs = 150_000,
+  training?: TrainingService,
 ) {
   const limits = new Map<string, { count: number; until: number }>();
   async function route(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -55,7 +61,10 @@ export function createApi(
     response.setHeader('Vary', 'Origin');
     if (request.method === 'OPTIONS') {
       response.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-      response.setHeader('Access-Control-Allow-Headers', 'authorization,content-type');
+      response.setHeader(
+        'Access-Control-Allow-Headers',
+        'authorization,content-type,x-smartmapper-request-id',
+      );
       send(response, 204, null);
       return;
     }
@@ -75,13 +84,52 @@ export function createApi(
       send(response, 201, await service.start(await body(request)));
       return;
     }
-    const match = /^\/v2\/jobs\/([a-f0-9-]{36})(?:\/(observe|receipts|pause|chat))?$/.exec(
+    if (url.pathname === '/v2/training/sessions' && request.method === 'POST') {
+      if (!training) throw new ApiError(503, 'training_unavailable');
+      send(response, 201, await training.start(await body(request)));
+      return;
+    }
+    const trainingMatch =
+      /^\/v2\/training\/sessions\/([a-f0-9-]{36})(?:\/(pages)(?:\/([a-f0-9-]{36}))?|\/(publish|verify|activate))?$/.exec(
+        url.pathname,
+      );
+    if (trainingMatch) {
+      if (!training) throw new ApiError(503, 'training_unavailable');
+      const trainingId = trainingMatch[1]!;
+      const section = trainingMatch[2];
+      const pageId = trainingMatch[3];
+      const operation = trainingMatch[4];
+      if (request.method === 'GET' && !section && !operation)
+        send(response, 200, { training: await training.read(trainingId, token) });
+      else if (request.method === 'DELETE' && !section && !operation) {
+        await training.cancel(trainingId, token);
+        send(response, 200, { cancelled: true });
+      } else if (request.method === 'POST' && section === 'pages' && !pageId)
+        send(response, 200, await training.capture(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && section === 'pages' && pageId)
+        send(
+          response,
+          200,
+          await training.savePage(trainingId, pageId, token, await body(request)),
+        );
+      else if (request.method === 'POST' && operation === 'publish')
+        send(response, 200, await training.publish(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && operation === 'verify')
+        send(response, 200, await training.verify(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && operation === 'activate')
+        send(response, 200, await training.activate(trainingId, token, await body(request)));
+      else throw new ApiError(404, 'not_found');
+      return;
+    }
+    const match = /^\/v2\/jobs\/([a-f0-9-]{36})(?:\/(observe|receipts|pause|diagnostics))?$/.exec(
       url.pathname,
     );
     const jobId = match?.[1];
     const operation = match?.[2];
     if (!jobId) throw new ApiError(404, 'not_found');
-    if (request.method === 'GET' && !operation)
+    if (request.method === 'GET' && operation === 'diagnostics')
+      send(response, 200, { ...(await service.diagnosticEvents(jobId, token)), buildVersion });
+    else if (request.method === 'GET' && !operation)
       send(response, 200, { job: await service.read(jobId, token) });
     else if (request.method === 'DELETE' && !operation) {
       await service.cancel(jobId, token);
@@ -90,32 +138,79 @@ export function createApi(
       send(response, 200, await service.observe(jobId, token, await body(request)));
     else if (request.method === 'POST' && operation === 'receipts')
       send(response, 200, { job: await service.receipt(jobId, token, await body(request)) });
-    else if (request.method === 'POST' && operation === 'chat')
-      send(response, 200, await service.chat(jobId, token, await body(request)));
     else if (request.method === 'POST' && operation === 'pause')
       send(response, 200, { job: await service.pause(jobId, token) });
     else throw new ApiError(404, 'not_found');
   }
   const server = createServer((request, response) => {
     response.once('finish', () => metric(response.statusCode));
-    void route(request, response).catch((error: unknown) => {
-      const status =
-        error instanceof ApiError
-          ? error.status
-          : error instanceof ConflictError
-            ? 409
-            : error instanceof ZodError
-              ? 400
-              : 503;
-      const code =
-        error instanceof ApiError
-          ? error.code
-          : error instanceof ConflictError
-            ? 'revision_conflict'
-            : error instanceof ZodError
-              ? 'invalid_payload'
-              : 'service_unavailable';
-      send(response, status, { error: code });
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(new DOMException('Operation deadline exceeded', 'TimeoutError')),
+      operationTimeoutMs,
+    );
+    timer.unref();
+    response.once('close', () => {
+      if (!response.writableEnded)
+        controller.abort(new DOMException('Client disconnected', 'AbortError'));
+    });
+    const suppliedId = z.uuid().safeParse(request.headers['x-smartmapper-request-id']);
+    const requestId = suppliedId.success ? suppliedId.data : randomUUID();
+    const jobId = z
+      .uuid()
+      .safeParse(/^\/v2\/jobs\/([a-f0-9-]{36})(?:\/|$)/.exec(request.url ?? '')?.[1]);
+    const trace = {
+      requestId,
+      jobId: jobId.success ? jobId.data : null,
+      signal: controller.signal,
+    };
+    const quiet =
+      request.method === 'OPTIONS' ||
+      request.url === '/health' ||
+      request.url?.endsWith('/diagnostics');
+    void service.diagnostics.request(trace, async () => {
+      const started = performance.now();
+      if (!quiet) service.diagnostics.emit('request', 'begin');
+      try {
+        await untilAborted(route(request, response), controller.signal);
+        if (!quiet) service.diagnostics.emit('request', 'end', performance.now() - started);
+      } catch (error: unknown) {
+        if (!quiet)
+          service.diagnostics.emit(
+            'request',
+            'error',
+            performance.now() - started,
+            undefined,
+            error,
+          );
+        const status =
+          diagnosticCode(error) === 'timeout'
+            ? 504
+            : error instanceof ApiError
+              ? error.status
+              : error instanceof ConflictError
+                ? 409
+                : error instanceof ZodError
+                  ? 400
+                  : 503;
+        const code =
+          error instanceof ApiError
+            ? error.code
+            : error instanceof ConflictError
+              ? 'revision_conflict'
+              : error instanceof ZodError
+                ? 'invalid_payload'
+                : 'service_unavailable';
+        if (!response.writableEnded && !response.destroyed)
+          send(response, status, {
+            error: code,
+            diagnosticCode: diagnosticCode(error),
+            stage: service.diagnostics.current()?.stage,
+            requestId,
+          });
+      } finally {
+        clearTimeout(timer);
+      }
     });
   });
   server.requestTimeout = 180_000;

@@ -78,6 +78,15 @@ void trustedStorage();
 let queue = Promise.resolve();
 chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
   if (sender.id !== chrome.runtime.id) return false;
+  // Carrier-page overlay clicks are consumed by the open side panel. They are not auth messages.
+  if (
+    sender.tab &&
+    typeof message === 'object' &&
+    message !== null &&
+    'type' in message &&
+    message.type === 'smartmapper-training-field-selected'
+  )
+    return false;
   queue = queue
     .then(() => handle(message, sender))
     .then(() => {

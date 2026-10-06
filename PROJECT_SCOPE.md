@@ -1,6 +1,20 @@
 # M.I.A. SmartMapper — Project Scope and Working Charter
 
-## Current POC baseline — September 30, 2026
+## Current POC baseline — October 6, 2026
+
+ADR 0018 supersedes the Astra/PDF runtime described in the September 30 and October 1 history below.
+The active POC is a human-trained deterministic mapping registry for Home and Auto. An authorized
+trainer catalogs rendered carrier fields page by page, links them to the complete M.I.A. semantic
+field catalog, explicitly classifies intentional defaults/blanks/human fields, and publishes a
+versioned mapping after demo-quote read-back validation. Production resolves that mapping into the
+existing allowlisted action/executor path. It preserves provenance, local verification, resumable
+state, independent field failures, guarded ordinary Next/Continue, and human-only final actions.
+
+The active runtime does not use Astra, PDF interpretation, mapping chat, model suggestions or model
+verification. Historical ADRs and dated findings remain as decision evidence; model runtime code and
+cloud dependencies are removed from the deliverable.
+
+## Historical POC baseline — September 30, 2026
 
 October 1 update: Dom approved PDF quote-sheet context and a tab-specific panel in ADR 0013.
 This supersedes the question-catalog input and screenshot-every-viewport requirements for
@@ -155,7 +169,7 @@ findings remain deliverables while effort returns to local accuracy and resilien
 - A Manifest V3 local extension prototype.
 - A remote browser worker proof of concept behind the shared Executor interface.
 - Resumable jobs with start, pause, resume, cancel, expiration, failure, and review states.
-- Deterministic mapping, semantic fallback, controlled AI mapping interface, and mock provider.
+- Human-trained, versioned mapping registry and deterministic execution through the shared core.
 - Post-entry read-back, validation, unresolved items, and redacted audit trail.
 - Local mock carrier lab, regression fixtures, layout mutation, and browser tests.
 - Architecture, adapter, data, security, test, backlog, ADR, deployment/handoff, and known-risk docs.
@@ -275,7 +289,11 @@ indexed semantic source patterns and row identity/order rules. An unexpected fin
 as page_changed. Maintenance begins with a redacted snapshot/fixture, reproduces the change in the
 mock lab, versions the adapter, adds regression tests, reviews risk, and then deploys.
 
-## 16. AI mapping policy
+## 16. Retired AI mapping policy (historical)
+
+ADR 0018 retired this policy from the active product. The text below records the superseded design
+only; no model provider, screenshot planner, PDF interpreter, prompt, suggestion or mapping chat is
+part of build 0.3.0.
 
 The order is deterministic adapter rules, DOM/accessibility semantic matching, AI-assisted
 interpretation, screenshot/vision only when semantics are inadequate, then human review/stop.
@@ -380,7 +398,7 @@ explicitly unsupported fields but not silently skipped required fields.
 | 3–4   | Local and remote technical spikes, authentication/session/handoff feasibility, executor interface, cost/compatibility evidence, Week 4 decision gate         |
 | 5–7   | Shared core, extension workflow, first approved/mock adapter end to end, provenance/read-back/audit                                                          |
 | 8–10  | Second adapter, dynamic lists, conditionals, validation, review UX, pause/resume recovery                                                                    |
-| 11–12 | AI-assisted fallback behind interface, changed-page detection, regression suite, audit/redaction hardening                                                   |
+| 11–12 | Mapping-registry training, changed-page detection, regression suite, audit/redaction hardening                                                               |
 | 13–14 | Approved M.I.A. development integration, notifications, chosen remote proof of concept, resilience testing                                                   |
 | 15    | Security review, UAT, accuracy/performance/cost measurements, prioritized fixes                                                                              |
 | 16    | Demonstration, documentation, deployment/handoff plan, known limitations and unresolved-risk report                                                          |
@@ -411,22 +429,22 @@ use only approved synthetic or test data.
 
 ## 25. Risk register
 
-| Risk                                   | Probability | Impact   | Mitigation                                                                | Trigger                                   | Owner                 |
-| -------------------------------------- | ----------- | -------- | ------------------------------------------------------------------------- | ----------------------------------------- | --------------------- |
-| Carrier terms prohibit automation      | Medium      | Critical | Written per-carrier review; mock-only until approved                      | Agreement uncertainty or objection        | TBD — Dom/legal       |
-| No sandbox/test access                 | High        | High     | Mock fidelity, early access request, defer real integration               | No access by Week 3                       | TBD — Dom             |
-| MFA/CAPTCHA blocks unattended flow     | High        | High     | Human pause/handoff; never bypass                                         | Challenge encountered                     | Workstream C/security |
-| Bot detection or network restrictions  | Medium      | High     | Observe in approved test only; compare host options; no evasion           | Session blocked or challenged             | Technical owner       |
-| DOM changes                            | High        | High     | Semantic locators, fingerprints, changed-layout tests, adapter versions   | Fingerprint/validation drift              | Workstream B          |
-| Iframes or shadow DOM                  | Medium      | Medium   | Early spike, explicit frame metadata, safe unsupported state              | Required controls inaccessible            | Workstream B          |
-| Ambiguous underwriting question        | High        | Critical | No inference; high-risk human review                                      | Multiple plausible mappings/answer absent | Product owner         |
-| PII leakage in logs/artifacts          | Medium      | Critical | Redaction, no production student data, ignored artifacts, retention tests | Secret scan/log test alert                | Security owner        |
-| Model hallucination/prompt injection   | Medium      | Critical | Sanitized structured inputs, schema/policy gates, no facts/scripts        | Invalid action or hostile page text       | AI/security owner     |
-| Remote session handoff fails           | Medium      | High     | Week 3–4 spike, exact-session proof, expiration/revocation                | Cannot securely resume session            | Workstream C          |
-| Azure cost exceeds cap                 | Medium      | Medium   | Budget alerts, per-job/idle metrics, tags, teardown                       | Threshold exceeded                        | TBD — Dom/cloud       |
-| Four-month time limit                  | High        | High     | Local-first scope, Week 4 gate, mock fallback, stretch separation         | Milestone misses two weeks                | Dom/team              |
-| Existing M.I.A. integration dependency | Medium      | High     | Contract-first mocks, named owner, late integration gate                  | Docs/access unavailable                   | Dom/API owner         |
-| Repository remains public              | High now    | Critical | Generic files only; no bootstrap push; transfer/private blocker           | Visibility check reports public           | Dom                   |
+| Risk                                   | Probability | Impact   | Mitigation                                                                | Trigger                                   | Owner                  |
+| -------------------------------------- | ----------- | -------- | ------------------------------------------------------------------------- | ----------------------------------------- | ---------------------- |
+| Carrier terms prohibit automation      | Medium      | Critical | Written per-carrier review; mock-only until approved                      | Agreement uncertainty or objection        | TBD — Dom/legal        |
+| No sandbox/test access                 | High        | High     | Mock fidelity, early access request, defer real integration               | No access by Week 3                       | TBD — Dom              |
+| MFA/CAPTCHA blocks unattended flow     | High        | High     | Human pause/handoff; never bypass                                         | Challenge encountered                     | Workstream C/security  |
+| Bot detection or network restrictions  | Medium      | High     | Observe in approved test only; compare host options; no evasion           | Session blocked or challenged             | Technical owner        |
+| DOM changes                            | High        | High     | Semantic locators, fingerprints, changed-layout tests, adapter versions   | Fingerprint/validation drift              | Workstream B           |
+| Iframes or shadow DOM                  | Medium      | Medium   | Early spike, explicit frame metadata, safe unsupported state              | Required controls inaccessible            | Workstream B           |
+| Ambiguous underwriting question        | High        | Critical | No inference; high-risk human review                                      | Multiple plausible mappings/answer absent | Product owner          |
+| PII leakage in logs/artifacts          | Medium      | Critical | Redaction, no production student data, ignored artifacts, retention tests | Secret scan/log test alert                | Security owner         |
+| Incorrect trained mapping              | Medium      | Critical | Proof job, provenance, read-back, immutable versions, rollback            | Wrong target or changed carrier page      | Product/security owner |
+| Remote session handoff fails           | Medium      | High     | Week 3–4 spike, exact-session proof, expiration/revocation                | Cannot securely resume session            | Workstream C           |
+| Azure cost exceeds cap                 | Medium      | Medium   | Budget alerts, per-job/idle metrics, tags, teardown                       | Threshold exceeded                        | TBD — Dom/cloud        |
+| Four-month time limit                  | High        | High     | Local-first scope, Week 4 gate, mock fallback, stretch separation         | Milestone misses two weeks                | Dom/team               |
+| Existing M.I.A. integration dependency | Medium      | High     | Contract-first mocks, named owner, late integration gate                  | Docs/access unavailable                   | Dom/API owner          |
+| Repository remains public              | High now    | Critical | Generic files only; no bootstrap push; transfer/private blocker           | Visibility check reports public           | Dom                    |
 
 Probability/impact are initial qualitative estimates and must be reviewed in Week 1.
 
@@ -437,7 +455,7 @@ Accepted bootstrap decisions:
 - One shared core with extension and remote executor interfaces.
 - Local mode is primary; remote is a Week 4 gated feasibility proof.
 - Human review precedes submission and high-risk/uncertain decisions.
-- AI output is structured, schema validated, and never directly executable.
+- Trained mappings compile only to schema-validated allowlisted actions and are never executable code.
 - Semantic field identifiers and PII minimization are default.
 - Development uses two synthetic localhost mock flows.
 
@@ -459,7 +477,7 @@ Score each criterion from 1 (unacceptable) to 5 (strong) after approved spikes. 
 | Failure recovery             |      5 | Retry, resume, cancel, expiration demonstration | Pending |
 
 Open questions include every TBD in DOM_NOTES.md, especially initial line, carriers, authorization,
-extension/API contracts, always-human questions, repository privacy, AI/Azure choices, notification,
+extension/API contracts, always-human questions, repository privacy, Azure choices, notification,
 retention, and acceptance timing.
 
 ## 27. DOM TO PROVIDE / PRODUCT OWNER INPUTS
@@ -467,7 +485,7 @@ retention, and acceptance timing.
 Complete DOM_NOTES.md without secret values. Critical inputs are repository transfer/privacy and
 collaborators; legal/IP/university constraints; line/state/carrier priorities; carrier authorization
 and sandbox users; existing extension and development API contracts; approved normalized schema and
-business rules; synthetic acceptance cases; AI/Azure/security decisions; remote handoff; notification;
+business rules; synthetic acceptance cases; Azure/security decisions; remote handoff; notification;
 accuracy/time approval; and team cadence.
 
 No password, key, token, cookie, MFA code, private certificate, client record, or production screenshot

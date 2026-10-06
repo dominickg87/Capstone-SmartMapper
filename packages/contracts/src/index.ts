@@ -4,3 +4,5 @@ export * from './jobs.js';
 export * from './mia.js';
 export * from './page.js';
 export * from './smartmapper.js';
+export * from './diagnostics.js';
+export * from './registry.js';

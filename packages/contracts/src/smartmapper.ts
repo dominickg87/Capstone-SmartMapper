@@ -7,13 +7,8 @@ const origin = z
   .url()
   .refine((value) => new URL(value).origin === value, 'Expected an origin');
 const scalar = z.union([z.string().max(8000), z.number().finite(), z.boolean()]);
-const screenshot = z
-  .string()
-  .max(8_000_000)
-  .regex(/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/);
+const sourceValue = z.union([scalar, z.array(scalar).max(300)]);
 export const MAX_PAGE_ACTIONS = 48;
-export const MAX_PAGE_IMAGES = 12;
-export const MAX_SURVEY_BYTES = 20_000_000;
 
 export const SourceAnswerSchema = z
   .object({
@@ -25,46 +20,12 @@ export const SourceAnswerSchema = z
     entity: shortText,
     context: z.array(shortText).max(30),
     options: z.array(z.object({ value: scalar, label: shortText }).strict()).max(300),
-    value: scalar.nullable(),
+    value: sourceValue.nullable(),
     status: z.enum(['answered', 'missing', 'conflicting', 'human_only']),
-    dataType: z.enum(['text', 'date', 'number', 'boolean', 'enum']),
-    documentEvidence: z
-      .object({
-        digest: z.string().regex(/^[a-f0-9]{64}$/),
-        page: z.number().int().min(1).max(200),
-      })
-      .strict()
-      .optional(),
+    dataType: z.enum(['text', 'date', 'number', 'boolean', 'enum', 'multiselect']),
   })
   .strict();
 export type SourceAnswer = z.infer<typeof SourceAnswerSchema>;
-
-export const QuoteSheetSchema = z
-  .object({
-    tenantId: id,
-    userId: id,
-    quoteId: id,
-    revision: id,
-    digest: z.string().regex(/^[a-f0-9]{64}$/),
-    data: z
-      .string()
-      .min(8)
-      .max(20_000_000)
-      .regex(/^[A-Za-z0-9+/]+={0,2}$/),
-  })
-  .strict();
-export type QuoteSheet = z.infer<typeof QuoteSheetSchema>;
-
-// Model-extracted citations are proposals, not facts, until independently checked against the PDF.
-export const DocumentAnswerSchema = z
-  .object({
-    answerId: id,
-    page: z.number().int().min(1).max(200),
-    question: z.string().min(1).max(4000),
-    entity: shortText,
-    value: z.string().min(1).max(8000),
-  })
-  .strict();
 
 export const SourceAnswersSchema = z
   .object({
@@ -74,7 +35,6 @@ export const SourceAnswersSchema = z
     quoteId: id,
     formType: id,
     revision: id,
-    sourceFormat: z.literal('pdf').optional(),
     answers: z.array(SourceAnswerSchema).max(2000),
     unavailablePaths: z.array(id).max(2000),
   })
@@ -103,6 +63,7 @@ export const PageControlSchema = z
     disabled: z.boolean(),
     humanOnly: z.boolean(),
     ordinaryNext: z.boolean().optional(),
+    choiceGroup: z.object({ key: id, label: shortText }).strict().nullable().optional(),
     options: z.array(z.object({ value: z.string().max(2000), label: shortText }).strict()).max(300),
     errors: z.array(shortText).max(20),
     rect: z
@@ -156,30 +117,8 @@ export const PageObservationSchema = z
       })
       .strict()
       .optional(),
-    images: z
-      .array(
-        z
-          .object({
-            screenshot,
-            x: z.number().nonnegative(),
-            y: z.number().nonnegative(),
-            width: z.number().positive(),
-            height: z.number().positive(),
-          })
-          .strict(),
-      )
-      .min(1)
-      .max(MAX_PAGE_IMAGES)
-      .optional(),
-    screenshot: screenshot.nullable(),
   })
-  .strict()
-  .refine(
-    (page) =>
-      !page.images ||
-      page.images.reduce((total, image) => total + image.screenshot.length, 0) <= MAX_SURVEY_BYTES,
-    'Page images exceed the survey limit',
-  );
+  .strict();
 export type PageObservation = z.infer<typeof PageObservationSchema>;
 
 // One bounded representation, shared by the provider, server policy and executor.
@@ -218,11 +157,16 @@ export const FieldReviewSchema = z
     entity: shortText,
     reason: z.enum([
       'missing_source',
+      'missing_mapping',
       'missing_question_context',
       'ambiguous_match',
       'human_only',
+      'human_required',
       'validation_error',
+      'read_back_mismatch',
       'unsupported_control',
+      'changed_target',
+      'changed_options',
       'source_mismatch',
       'retry_limit',
       'page_changed',
@@ -230,34 +174,6 @@ export const FieldReviewSchema = z
   })
   .strict();
 export type FieldReview = z.infer<typeof FieldReviewSchema>;
-
-export type FactVerification =
-  | { approved: true }
-  | {
-      approved: false;
-      reason: 'missing_question_context' | 'ambiguous_match' | 'source_mismatch';
-    };
-
-export interface FactVerificationEntry {
-  action: AutomationActionV2;
-  control: PageControl;
-  sources: SourceAnswer[];
-}
-
-// Legacy clients without a full-page survey still have the eight-field viewport limit.
-export const MAX_SECTION_ACTIONS = 8;
-
-export const SmartMapperPlanSchema = z
-  .object({
-    version: z.literal('2.0'),
-    pageStateId: id,
-    outcome: z.enum(['act', 'page_complete', 'human_input', 'blocked']),
-    actions: z.array(AutomationActionV2Schema).max(MAX_PAGE_ACTIONS),
-    reviews: z.array(FieldReviewSchema).max(100),
-    documentAnswers: z.array(DocumentAnswerSchema).max(200).optional(),
-  })
-  .strict();
-export type SmartMapperPlan = z.infer<typeof SmartMapperPlanSchema>;
 
 export const ActionReceiptSchema = z
   .object({
@@ -306,46 +222,30 @@ export type RedeemedGrant = z.infer<typeof RedeemedGrantSchema>;
 
 export const StartJobSchema = z
   .object({
-    sourceFormat: z.literal('pdf').optional(),
     miaOrigin: origin,
     code: z.string().min(32).max(256),
     verifier: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
     carrierOrigin: origin,
+    carrierPageUrl: z
+      .string()
+      .url()
+      .max(2000)
+      .refine((value) => {
+        const url = new URL(value);
+        return !url.username && !url.password && !url.search && !url.hash;
+      }, 'Carrier page URL must be sanitized'),
     tabId: z.number().int().nonnegative(),
+    mappingSelection: z
+      .object({
+        mode: z.literal('testable'),
+        mappingId: z.string().uuid(),
+        mappingVersion: z.number().int().positive(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 export type StartJob = z.infer<typeof StartJobSchema>;
-
-export const MappingChatMessageSchema = z
-  .object({
-    role: z.enum(['user', 'assistant']),
-    text: z.string().trim().min(1).max(4000),
-  })
-  .strict();
-export type MappingChatMessage = z.infer<typeof MappingChatMessageSchema>;
-export const MappingConversationSchema = z.array(MappingChatMessageSchema).max(20);
-export const MappingChatReplySchema = z
-  .object({
-    version: z.literal('2.0'),
-    reply: z.string().trim().min(1).max(4000),
-  })
-  .strict();
-export type MappingChatReply = z.infer<typeof MappingChatReplySchema>;
-export const MappingChatRequestSchema = z
-  .object({
-    revision: z.number().int().nonnegative(),
-    observation: PageObservationSchema,
-    conversation: MappingConversationSchema.refine(
-      (messages) =>
-        messages.length > 0 &&
-        messages.length % 2 === 1 &&
-        messages.every(
-          (message, index) => message.role === (index % 2 === 0 ? 'user' : 'assistant'),
-        ),
-      'Expected alternating conversation ending with a user message',
-    ),
-  })
-  .strict();
 
 export const ObserveRequestSchema = z
   .object({
@@ -353,7 +253,6 @@ export const ObserveRequestSchema = z
     resume: z.boolean(),
     skipElementId: id.optional(),
     observation: PageObservationSchema,
-    conversation: MappingConversationSchema.default([]),
   })
   .strict();
 
@@ -388,14 +287,6 @@ export const JobViewSchema = z
   .strict();
 export type JobView = z.infer<typeof JobViewSchema>;
 
-export const MappingChatResponseSchema = z
-  .object({
-    job: JobViewSchema,
-    response: MappingChatReplySchema,
-  })
-  .strict();
-export type MappingChatResponse = z.infer<typeof MappingChatResponseSchema>;
-
 export const ActionBatchSchema = z
   .object({
     batchId: z.string().uuid(),
@@ -416,22 +307,3 @@ export const ObserveResponseSchema = z
   })
   .strict();
 export type ObserveResponse = z.infer<typeof ObserveResponseSchema>;
-
-export interface SmartMapperObservation {
-  page: PageObservation;
-  document?: QuoteSheet;
-  source: SourceAnswers;
-  attempts: Record<string, number>;
-  recentResults: ActionReceipt[];
-  verifiedControls: string[];
-  skippedElementIds?: string[];
-  conversation?: MappingChatMessage[];
-}
-
-export interface MappingChatContext {
-  page: PageObservation;
-  document?: QuoteSheet;
-  source: SourceAnswers;
-  conversation: MappingChatMessage[];
-  recentResults: ActionReceipt[];
-}
