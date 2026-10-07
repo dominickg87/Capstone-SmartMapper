@@ -6,7 +6,7 @@
     "noEmit": true,
     "tsBuildInfoFile": "../test-results/e2e.tsbuildinfo"
   },
-  "include": ["e2e/**/*.ts"],
+  "include": ["e2e/**/*.ts", "../apps/extension-prototype/src/training-observation.ts"],
   "references": [
     { "path": "../apps/automation-worker" },
     { "path": "../packages/mia-client" },

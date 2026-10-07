@@ -1,6 +1,6 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys backend **0.3.0** and extension **0.3.1**, the human-trained deterministic mapping registry accepted in
+This guide deploys backend **0.3.3** and extension **0.3.3**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -10,17 +10,17 @@ chat, prompts, or model verification. Do not configure Azure OpenAI variables fo
 
 ## Required infrastructure
 
-| Resource         | Current value                                                              | Purpose                                   |
-| ---------------- | -------------------------------------------------------------------------- | ----------------------------------------- |
-| Subscription     | `47b7b9c8-dd15-407c-a380-f033eac1ad92`                                     | Existing Azure subscription               |
-| Resource group   | `rg-mia-smartmap-prod` in East US                                          | Existing SmartMapper resource boundary    |
-| App Service      | `asp-smartmapper-dev`                                                      | Authenticated SmartMapper API             |
-| Backend origin   | `https://asp-smartmapper-dev-fgbqddfbewfrd2at.eastus-01.azurewebsites.net` | Extension API origin                      |
-| Storage account  | `stsmartmapperdevdg`                                                       | Jobs, drafts, and mappings                |
-| Existing table   | `SmartMapperJobs`                                                          | Expiring mapping jobs and training drafts |
-| Registry table   | `SmartMapperMappings`                                                      | Persistent immutable registry versions    |
-| Managed identity | App Service system identity                                                | Access to both Azure Tables               |
-| Monitoring       | `appi-smartmapper-dev` and its linked workspace                            | Redacted request/stage telemetry          |
+| Resource         | Current value                                                              | Purpose                                              |
+| ---------------- | -------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Subscription     | `47b7b9c8-dd15-407c-a380-f033eac1ad92`                                     | Existing Azure subscription                          |
+| Resource group   | `rg-mia-smartmap-prod` in East US                                          | Existing SmartMapper resource boundary               |
+| App Service      | `asp-smartmapper-dev`                                                      | Authenticated SmartMapper API                        |
+| Backend origin   | `https://asp-smartmapper-dev-fgbqddfbewfrd2at.eastus-01.azurewebsites.net` | Extension API origin                                 |
+| Storage account  | `stsmartmapperdevdg`                                                       | Jobs, drafts, and mappings                           |
+| Existing table   | `SmartMapperJobs`                                                          | Expiring jobs and durable value-free training drafts |
+| Registry table   | `SmartMapperMappings`                                                      | Persistent immutable registry versions               |
+| Managed identity | App Service system identity                                                | Access to both Azure Tables                          |
+| Monitoring       | `appi-smartmapper-dev` and its linked workspace                            | Redacted request/stage telemetry                     |
 
 No SQL database, Redis cache, queue, hosted browser, VPN, private endpoint, Foundry Agent Service,
 Document Intelligence, AI Search, vector store, or additional web application is required.
@@ -68,8 +68,10 @@ For one approved tenant:
 ```powershell
 php artisan tenants:migrate --tenants=TENANT_ID --force
 php artisan config:cache
-php artisan test --compact tests/Feature/SmartMapperV2Test.php
 ```
+
+Run `SmartMapperV2Test.php` and `ExtensionApiTest.php` in local development or CI before deploying.
+The production commands above apply migrations and configuration; they do not run the test suite.
 
 The migrations include the existing quote grant table and the new training grant table. They do not
 change quote answers. The value-free Home/Auto catalog is generated from reviewed M.I.A. form
@@ -123,7 +125,7 @@ must contain:
 | `SCM_DO_BUILD_DURING_DEPLOYMENT`        | `false` for the prebuilt ZIP                                         |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Existing App Insights connection string                              |
 
-Remove these obsolete settings after the 0.3.0 package is deployed:
+Remove these obsolete settings after the deterministic package is deployed:
 
 ```text
 AZURE_OPENAI_BASE_URL
@@ -165,7 +167,7 @@ pnpm test:e2e
 
 Open `chrome://extensions`, enable Developer mode, and **Load unpacked** from
 `apps/extension-prototype/dist`. For an existing load, click **Reload**, close the old panel, and open
-it again. Confirm **Version 0.3.1** in the panel and on Chrome's extension card.
+it again. Confirm **Version 0.3.3** in the panel and on Chrome's extension card.
 
 Click the toolbar icon on the carrier tab. The panel stays attached only to that activated tab.
 Connect to M.I.A. through the normal agency sign-in. **Connection details** supplies the extension ID
@@ -173,7 +175,7 @@ and M.I.A. tenant/user scope without exposing its bearer token.
 
 Opening the panel does not require deploying M.I.A. or the Azure backend. Those paired deployments
 are needed for retrieving field catalogs, saving training, and running registry-backed mapping.
-If the panel does not open, check that Chrome's extension card shows 0.3.1, close any stale panel,
+If the panel does not open, check that Chrome's extension card shows 0.3.3, close any stale panel,
 return to a normal HTTP/HTTPS carrier tab, and click this POC's toolbar icon. Restricted pages such
 as `chrome://extensions` cannot activate the carrier panel. An opening failure shows a `!` badge;
 the extension service worker console records only `smartmapper.panel` and a reason code such as
@@ -215,6 +217,27 @@ Drafts autosave in `SmartMapperJobs`. Raw carrier labels and choices are used on
 drafts and registry versions persist their semantic strings and option values/labels only as SHA-256
 digests. Quote answers, current control values, HTML, screenshots, cookies, and browser credentials
 are excluded.
+
+### Reopen saved work after closing a tab or reloading the extension
+
+1. Reconnect to M.I.A. if needed. Open the carrier page, click the extension toolbar icon and choose **Train**.
+2. Under **Saved training and mappings**, choose Home or Auto and click **Find saved training and mappings**.
+3. For unfinished work, choose **Resume saved draft**. Saved choices and field numbers are copied into a freshly
+   authorized session for this tab. The original saved draft remains intact.
+4. For a completed version, choose **Open saved mapping for testing**, then **Test this mapping**.
+   Select a demo quote in Map and click **Start test mapping**. Ordinary Start mapping resolves active
+   versions; it cannot use an unverified testable version.
+
+Finding saved work does not replace the local session until a record is explicitly selected. The
+library is scoped to the freshly authorized account, carrier and line of business. A changed M.I.A.
+catalog blocks draft recovery pending review. Metadata restoration does not depend on successfully
+drawing overlays in an old tab. Overlays use freshly observed controls and never saved DOM IDs.
+See [ADR 0019](adr/0019-saved-training-recovery.md).
+
+The backend uses these training-session capability routes under `/v2/training/sessions/{id}`:
+`GET /library`, `POST /recover` with a saved draft ID and current revision, and `POST /open` with an
+exact mapping ID/version and current revision. Existing M.I.A. grant endpoints authorize discovery;
+no M.I.A. redeployment or additional cloud resource is needed for this recovery update.
 
 ## 6. Test, verify, and activate the mapping
 
@@ -262,7 +285,7 @@ az webapp deploy `
 ```
 
 Open the backend `/health` endpoint and expect `status: "ok"`, protocol `version: "2.0"`, and
-`buildVersion: "0.3.0"`. Health verifies process startup only. Complete the training and mapping
+`buildVersion: "0.3.3"`. Health verifies process startup only. Complete the training and mapping
 checks above to verify M.I.A., identity, both Azure Tables, and browser execution.
 
 Increment the affected app's patch version for every changed delivery. The extension manifest and
@@ -305,7 +328,7 @@ test remains a separately authorized, supervised task with its designated test a
 
 ## 9. Retire model-era resources after cutover
 
-After build 0.3.0 is deployed, a registry version is active, and ordinary mapping succeeds without
+After the deterministic build is deployed, a registry version is active, and ordinary mapping succeeds without
 model configuration:
 
 1. remove the obsolete App Service AI/reasoning variables listed above;
@@ -328,8 +351,9 @@ it as a deletion candidate after confirming no resource outside this resource gr
 ## Retention and limitations
 
 One-use M.I.A. grants expire in two minutes. Quote-mapping capabilities expire in one hour; a redeemed
-training session expires after eight hours.
-The API periodically purges expired checkpoints. Published mapping versions persist until a reviewed
+training capability expires after eight hours. Its value-free saved draft can be recovered with fresh
+authorization. The API periodically purges expired job rows and preserves training rows in the same
+table. Published mapping versions persist until a reviewed
 archive/delete policy removes them. Default logs contain correlation IDs, stages, status/reason codes,
 counts, and hashes rather than source or entered values.
 

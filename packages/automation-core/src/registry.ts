@@ -98,6 +98,65 @@ export function isSemanticHash(value: string): boolean {
   return new RegExp(`^${semanticHashPrefix}[a-f0-9]{64}$`, 'i').test(text(value));
 }
 
+type OperationalTarget = TrainingControlSnapshot['operationalTarget'];
+interface OperationalHashes {
+  labels: Map<string, Exclude<OperationalTarget, null>>;
+  actors: Map<string, Exclude<OperationalTarget, null>>;
+  identifiers: Set<string>;
+}
+let operationalHashCatalog: Promise<OperationalHashes> | undefined;
+
+function operationalHashes(): Promise<OperationalHashes> {
+  operationalHashCatalog ??= (async () => {
+    const labels: Array<readonly [string, Exclude<OperationalTarget, null>]> = [];
+    const actors: Array<readonly [string, Exclude<OperationalTarget, null>]> = [];
+    for (const actor of ['agency', 'agent', 'producer', 'office', 'branch', 'carrier']) {
+      const classification = actor === 'carrier' ? 'carrier_operational' : 'agency_operational';
+      actors.push([actor, classification]);
+      for (const identifier of ['code', 'id', 'identifier', 'number'])
+        labels.push([`${actor} ${identifier}`, classification]);
+    }
+    const hashed = async (entries: typeof labels) =>
+      new Map(
+        await Promise.all(
+          entries.map(
+            async ([label, classification]) =>
+              [await semanticTextDigest(label), classification] as const,
+          ),
+        ),
+      );
+    return {
+      labels: await hashed(labels),
+      actors: await hashed(actors),
+      identifiers: new Set(
+        await Promise.all(['code', 'id', 'identifier', 'number'].map(semanticTextDigest)),
+      ),
+    };
+  })();
+  return operationalHashCatalog;
+}
+
+/**
+ * The extension and API classify the same hashed semantics. An unfamiliar or prefixed label is
+ * still trainable, but cannot authorize an operational default or fixed value on its own.
+ */
+export async function recognizedOperationalTarget(
+  control: Pick<TrainingControlSnapshot, 'label' | 'section' | 'context'>,
+): Promise<OperationalTarget> {
+  const hashes = await operationalHashes();
+  const label = await semanticTextDigest(control.label);
+  const exact = hashes.labels.get(label);
+  if (exact) return exact;
+  if (!hashes.identifiers.has(label)) return null;
+  const surrounding = await Promise.all(
+    [control.section, ...control.context].map(semanticTextDigest),
+  );
+  for (const [actor, classification] of hashes.actors) {
+    if (surrounding.includes(actor)) return classification;
+  }
+  return null;
+}
+
 async function semanticTarget(
   value: Pick<
     PageControl,

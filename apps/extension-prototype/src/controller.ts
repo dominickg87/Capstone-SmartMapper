@@ -124,6 +124,7 @@ async function json(
       .object({
         diagnosticCode: DiagnosticCodeSchema.optional(),
         stage: MappingStageSchema.optional(),
+        error: z.string().optional(),
       })
       .safeParse(await response.json().catch(() => null));
     throw new ApiError(
@@ -137,7 +138,11 @@ async function json(
             : response.status === 403
               ? 'This demo account or page is not enabled for SmartMapper.'
               : response.status === 409
-                ? 'The page or job changed. Review it, then Resume mapping.'
+                ? detail.success && detail.data.error === 'mapping_not_trained'
+                  ? 'No active mapping is available for this carrier and quote type. Open Train → Find saved training and mappings, open the saved version, and choose Test this mapping.'
+                  : detail.success && detail.data.error === 'mapping_workflow_ambiguous'
+                    ? 'More than one mapping matches this workflow. Open the exact saved version in Train and choose Test this mapping.'
+                    : 'The page or job changed. Review it, then Resume mapping.'
                 : response.status === 422
                   ? 'This quote cannot be mapped. Select a supported Home or Auto quote.'
                   : 'Mapping paused. Check the service connection and try Resume mapping.',
@@ -562,6 +567,16 @@ export class ExtensionExecutor {
     this.progress.fail(error);
   }
   public async diagnosticReport(): Promise<string> {
+    try {
+      const health = z
+        .object({ buildVersion: z.string().regex(/^\d+\.\d+\.\d+$/) })
+        .parse(
+          await json(config.backendOrigin, '/health', null, 'GET', undefined, { timeoutMs: 5000 }),
+        );
+      this.progress.merge([], undefined, health.buildVersion);
+    } catch {
+      /* Preserve local diagnostics even if the backend cannot be reached. */
+    }
     const session = await jobSession();
     if (session) {
       try {

@@ -5,15 +5,8 @@ import { resolve } from 'node:path';
 import { chromium, expect, test, type Page, type Worker } from '@playwright/test';
 import { valueDigest } from '@smartmapper/automation-core/active-tab';
 import {
-  canonicalControlInputType,
-  canonicalControlRole,
-  semanticHashPrefix,
-  semanticTextDigest,
-} from '@smartmapper/automation-core/registry';
-import {
   ActionReceiptSchema,
   PageObservationSchema,
-  TrainingPageObservationSchema,
   type ActionBatch,
   type JobView,
   type MappingDisposition,
@@ -23,8 +16,8 @@ import {
   type SourceAnswers,
   type TrainingField,
   type TrainingPage,
-  type TrainingPageObservation,
 } from '@smartmapper/contracts';
+import { structuralTrainingObservation } from '../../apps/extension-prototype/src/training-observation.js';
 import { ActiveTabJobService } from '../../apps/orchestrator-api/src/active-tab-service.js';
 import { MemoryCheckpointStore } from '../../apps/orchestrator-api/src/checkpoints.js';
 import { MemoryMappingRegistryStore } from '../../apps/orchestrator-api/src/mapping-registry.js';
@@ -199,67 +192,6 @@ async function execute(worker: Worker, tabId: number, batch: ActionBatch) {
   return ActionReceiptSchema.parse(JSON.parse(serialized) as unknown);
 }
 
-async function privacySafeObservation(
-  observation: PageObservation,
-): Promise<TrainingPageObservation> {
-  const semantic = async (value: string): Promise<string> => {
-    const normalized = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
-    return normalized ? semanticHashPrefix + (await semanticTextDigest(normalized)) : '';
-  };
-  return TrainingPageObservationSchema.parse({
-    version: observation.version,
-    tabId: observation.tabId,
-    origin: observation.origin,
-    pageStateId: observation.pageStateId,
-    documentId: observation.documentId,
-    routeId: observation.routeId,
-    fingerprint: observation.fingerprint,
-    title: '',
-    headings: [],
-    controls: await Promise.all(
-      observation.controls.map(async (control) => {
-        const radio =
-          control.inputType.toLowerCase() === 'radio' || control.role.toLowerCase() === 'radio';
-        return {
-          elementId: control.elementId,
-          key: control.key,
-          tag: control.tag,
-          inputType: canonicalControlInputType(control.inputType),
-          role: canonicalControlRole(control.role),
-          label: await semantic(control.label),
-          section: await semantic(control.section),
-          context: await Promise.all(control.context.map(semantic)),
-          required: control.required,
-          disabled: control.disabled,
-          humanOnly: control.humanOnly,
-          addEntityType: null,
-          operationalTarget: null,
-          repeatHint: null,
-          ...(control.ordinaryNext === undefined ? {} : { ordinaryNext: control.ordinaryNext }),
-          choiceGroup: control.choiceGroup
-            ? {
-                key: await semantic(control.choiceGroup.key),
-                label: await semantic(control.choiceGroup.label),
-              }
-            : null,
-          choiceValue: radio ? await semantic(control.value) : null,
-          options: await Promise.all(
-            control.options.map(async (option) => ({
-              value: await semantic(option.value),
-              label: await semantic(option.label),
-            })),
-          ),
-          rect: { ...control.rect },
-        };
-      }),
-    ),
-    authenticationRequired: observation.authenticationRequired,
-    unsupportedFrames: observation.unsupportedFrames,
-    omittedControls: observation.omittedControls,
-    capturedAt: observation.capturedAt,
-  });
-}
-
 function sourceDisposition(
   sourcePath: string,
   transform: Extract<MappingDisposition, { kind: 'source' }>['transform'] = {
@@ -411,10 +343,10 @@ test('trains, proves, activates and reuses a registry mapping while preserving s
   });
   try {
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
-    const carrier = await context.newPage();
+    let carrier = await context.newPage();
     await carrier.goto(`${carrierOrigin}/classic?step=1`);
     await expect(carrier.getByRole('heading', { name: 'Risk worksheet' })).toBeVisible();
-    const tabId = await tabIdFor(worker);
+    let tabId = await tabIdFor(worker);
 
     const checkpoints = new MemoryCheckpointStore();
     const registry = new MemoryMappingRegistryStore();
@@ -483,7 +415,7 @@ test('trains, proves, activates and reuses a registry mapping while preserving s
       formType: 'home',
       workflowName: 'Synthetic workflow',
     });
-    const firstObservation = await privacySafeObservation(await observe(worker, tabId));
+    const firstObservation = await structuralTrainingObservation(await observe(worker, tabId));
     expectNoRawTrainingText(firstObservation);
     const firstCapture = await training.capture(started.training.trainingId, started.token, {
       revision: started.training.revision,
@@ -499,7 +431,7 @@ test('trains, proves, activates and reuses a registry mapping while preserving s
     );
 
     await carrier.goto(`${carrierOrigin}/classic?step=2`);
-    const secondObservation = await privacySafeObservation(await observe(worker, tabId));
+    const secondObservation = await structuralTrainingObservation(await observe(worker, tabId));
     const secondCapture = await training.capture(started.training.trainingId, started.token, {
       revision: firstSaved.training.revision,
       observation: secondObservation,
@@ -518,20 +450,46 @@ test('trains, proves, activates and reuses a registry mapping while preserving s
     expect(published.mapping.status).toBe('testable');
     expectNoRawTrainingText(published.mapping);
 
+    const originalTabId = tabId;
+    await carrier.close();
+    carrier = await context.newPage();
     await carrier.goto(`${carrierOrigin}/classic?step=1`);
+    tabId = await tabIdFor(worker);
+    expect(tabId).not.toBe(originalTabId);
+    const fresh = await training.start({
+      miaOrigin,
+      code: 'n'.repeat(32),
+      verifier: 'z'.repeat(43),
+      carrierOrigin,
+      carrierBaseUrl: carrierOrigin,
+      tabId,
+      formType: 'home',
+      workflowName: 'Synthetic workflow',
+    });
+    const library = await training.library(fresh.training.trainingId, fresh.token);
+    expect(library.mappings).toEqual([published.mapping]);
+    const reopened = await training.openMapping(fresh.training.trainingId, fresh.token, {
+      revision: fresh.training.revision,
+      mappingId: published.mapping.mappingId,
+      mappingVersion: published.mapping.mappingVersion,
+    });
+    expect(reopened.training.binding.tabId).toBe(tabId);
+    expect((await training.read(started.training.trainingId, started.token)).binding.tabId).toBe(
+      originalTabId,
+    );
     const proof = await runCleanJob(runtime, worker, carrier, tabId, {
       mappingId: published.mapping.mappingId,
       mappingVersion: published.mapping.mappingVersion,
     });
     expect(proof.job).toMatchObject({ status: 'page_complete', failed: 0, reviews: [] });
-    const verified = await training.verify(started.training.trainingId, started.token, {
-      revision: published.training.revision,
+    const verified = await training.verify(fresh.training.trainingId, fresh.token, {
+      revision: reopened.training.revision,
       mappingVersion: published.mapping.mappingVersion,
       jobId: proof.jobId,
       jobToken: proof.token,
     });
     expect(verified.mapping.status).toBe('verified');
-    const activated = await training.activate(started.training.trainingId, started.token, {
+    const activated = await training.activate(fresh.training.trainingId, fresh.token, {
       revision: verified.training.revision,
       mappingVersion: verified.mapping.mappingVersion,
     });

@@ -1,5 +1,35 @@
 # Current decisions — September 30, 2026
 
+- October 7, build 0.3.3: Closing a carrier tab stranded the saved training view because overlay
+  restoration threw before displaying metadata. Restoration now preserves the saved view; the
+  trainer can find durable drafts or published mappings using a fresh, same-scope M.I.A. training
+  grant. Draft recovery copies saved choices into the new tab's session without changing the old
+  capability or any job. Overlays resolve fresh controls by semantic signature and occurrence.
+  Job cleanup now excludes training rows in the shared table. See ADR 0019; verification and
+  activation gates remain in place. All 183 unit tests and eight browser tests passed, together
+  with formatting, lint, strict type checking and builds. Azure CLI deployed backend 0.3.3;
+  `/health` identifies that build and its new library route rejects an invalid synthetic capability.
+  The extension is rebuilt for the existing demo/Azure origins. Dom's saved carrier work remains
+  to be discovered through his own fresh M.I.A. authorization.
+
+- October 7, build 0.3.2: Dom's first training capture returned HTTP 409 before saving a page.
+  The extension's broad operational-label regex could disagree with the backend's hashed allowlist,
+  rejecting an entire capture as unsafe structure. Both boundaries now use the existing conservative
+  allowlist in the shared core. Unfamiliar labels remain trainable; operational defaults and fixed
+  values still require recognized identifiers. The panel distinguishes capture-validation,
+  duplicate-page, expired-observation and binding errors from actual revision conflicts. Synthetic
+  browser tests now use the production extension serializer and include prefixed operational labels.
+  All 170 unit tests and seven browser tests passed alongside formatting, lint, strict type checking
+  and builds. Azure CLI deployed backend 0.3.2 and `/health` confirms that build; extension 0.3.2 is
+  rebuilt for the existing demo/Azure origins. Dom still needs to retry his supervised carrier capture.
+
+- October 7, backend 0.3.1: After Dom deployed the M.I.A. main branch, the deterministic API was
+  packaged and deployed through Azure CLI to the existing POC App Service. Azure registry/table,
+  supervised any-carrier, and approved guarded Next settings are configured; retired model settings
+  are removed. Health identifies build 0.3.1, both services accept the POC extension origin, and M.I.A.
+  rejects invalid synthetic quote/training grants with 401. Authenticated training, persistence and
+  carrier acceptance still require Dom's first supervised test. The extension remains 0.3.1.
+
 - October 7, extension 0.3.1: Dom reported that the 0.3.0 toolbar did not open the side panel.
   Panel opening now runs directly inside the toolbar click before storage callbacks. Saved owner
   reconciliation remains resumable, rapid tab activations cannot disable the newest owner, and

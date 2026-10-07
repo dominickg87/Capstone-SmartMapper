@@ -3,6 +3,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, expect, test, type Worker } from '@playwright/test';
 import { PageObservationSchema, type PageObservation } from '@smartmapper/contracts';
+import { structuralTrainingObservation } from '../../apps/extension-prototype/src/training-observation.js';
+import { MemoryCheckpointStore } from '../../apps/orchestrator-api/src/checkpoints.js';
+import { MemoryMappingRegistryStore } from '../../apps/orchestrator-api/src/mapping-registry.js';
+import {
+  MemoryTrainingSessionStore,
+  TrainingService,
+} from '../../apps/orchestrator-api/src/training-service.js';
 
 const carrierOrigin = 'http://127.0.0.1:4173';
 const extensionPath = resolve('.tools/e2e-training-extension');
@@ -85,6 +92,17 @@ test('training observes one logical radio group, shows a numbered marker, and ne
     await carrier.goto(carrierOrigin + '/classic?step=1');
     await expect(carrier.getByRole('heading', { name: 'Risk worksheet' })).toBeVisible();
 
+    // Operational-looking carrier labels must not make an otherwise valid page uncapturable.
+    await carrier.locator('form').evaluate((form) => {
+      const label = document.createElement('label');
+      label.textContent = 'Demo Agent Code:*';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = 'SYNTHETIC-AGENCY';
+      label.append(input);
+      form.prepend(label);
+    });
+
     const tabId = await tabIdFor(worker, '/classic');
     const page = await observe(worker, tabId);
     const radioControls = page.controls.filter(
@@ -92,6 +110,82 @@ test('training observes one logical radio group, shows a numbered marker, and ne
     );
     expect(radioControls).toHaveLength(2);
     expect(new Set(radioControls.map((control) => control.choiceGroup?.key)).size).toBe(1);
+
+    const service = new TrainingService(
+      new MemoryTrainingSessionStore(),
+      {
+        redeem: (request) =>
+          Promise.resolve({
+            version: '2.0',
+            binding: {
+              tenantId: 'tenant',
+              userId: 'user',
+              carrierOrigin,
+              tabId: request.tabId,
+              formType: 'home',
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            },
+            catalog: {
+              version: '2.0',
+              schemaRevision: 'synthetic-home',
+              formType: 'home',
+              entityLimits: [],
+              templates: [],
+              fields: [],
+            },
+          }),
+      },
+      new MemoryMappingRegistryStore(),
+      {
+        miaOrigins: new Set(['https://mia.test']),
+        carrierOrigins: new Set([carrierOrigin]),
+        principals: new Set(['tenant/user']),
+      },
+      new MemoryCheckpointStore(),
+    );
+    const started = await service.start({
+      miaOrigin: 'https://mia.test',
+      code: 'c'.repeat(32),
+      verifier: 'v'.repeat(43),
+      carrierOrigin,
+      carrierBaseUrl: carrierOrigin,
+      tabId,
+      formType: 'home',
+      workflowName: 'Synthetic workflow',
+    });
+    const structural = await structuralTrainingObservation(page);
+    const operational = page.controls.find((control) => control.label === 'Demo Agent Code:*');
+    expect(operational).toBeDefined();
+    expect(
+      structural.controls.find((control) => control.elementId === operational!.elementId)
+        ?.operationalTarget,
+    ).toBeNull();
+    const captured = await service.capture(started.training.trainingId, started.token, {
+      revision: started.training.revision,
+      observation: structural,
+    });
+    expect(captured.training).toMatchObject({ revision: 1, status: 'draft' });
+    expect(captured.page.fields).toHaveLength(6);
+    expect(
+      captured.page.fields.find((field) => field.control.elementId === operational!.elementId),
+    ).toBeDefined();
+    expect(JSON.stringify(captured.training)).not.toContain('SYNTHETIC-AGENCY');
+    expect(JSON.stringify(captured.training)).not.toContain('Demo Agent Code');
+    // Capturing the field is allowed; assigning an unrecognized operational default remains denied.
+    await expect(
+      service.savePage(started.training.trainingId, captured.page.pageId, started.token, {
+        revision: captured.training.revision,
+        fields: [
+          {
+            fieldId: captured.page.fields.find(
+              (field) => field.control.elementId === operational!.elementId,
+            )!.fieldId,
+            disposition: { kind: 'carrier_default' },
+          },
+        ],
+        workflowControls: [],
+      }),
+    ).rejects.toMatchObject({ code: 'unsafe_mapping_disposition' });
 
     const anchor = radioControls[0]!;
     await worker.evaluate(

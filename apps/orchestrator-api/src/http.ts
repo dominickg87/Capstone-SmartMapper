@@ -90,7 +90,7 @@ export function createApi(
       return;
     }
     const trainingMatch =
-      /^\/v2\/training\/sessions\/([a-f0-9-]{36})(?:\/(pages)(?:\/([a-f0-9-]{36}))?|\/(publish|verify|activate))?$/.exec(
+      /^\/v2\/training\/sessions\/([a-f0-9-]{36})(?:\/(pages)(?:\/([a-f0-9-]{36}))?|\/(publish|verify|activate|library|recover|open))?$/.exec(
         url.pathname,
       );
     if (trainingMatch) {
@@ -99,7 +99,13 @@ export function createApi(
       const section = trainingMatch[2];
       const pageId = trainingMatch[3];
       const operation = trainingMatch[4];
-      if (request.method === 'GET' && !section && !operation)
+      if (request.method === 'GET' && operation === 'library')
+        send(response, 200, await training.library(trainingId, token));
+      else if (request.method === 'POST' && operation === 'recover')
+        send(response, 200, await training.recover(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && operation === 'open')
+        send(response, 200, await training.openMapping(trainingId, token, await body(request)));
+      else if (request.method === 'GET' && !section && !operation)
         send(response, 200, { training: await training.read(trainingId, token) });
       else if (request.method === 'DELETE' && !section && !operation) {
         await training.cancel(trainingId, token);

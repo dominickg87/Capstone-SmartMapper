@@ -7,6 +7,7 @@ import {
 import {
   canonicalControlInputType,
   canonicalControlRole,
+  recognizedOperationalTarget,
   semanticHashPrefix,
   semanticTextDigest,
 } from '@smartmapper/automation-core/registry';
@@ -58,21 +59,6 @@ function addEntityType(
   if (/\b(?:driver|operator)\b/i.test(label)) return 'additionalDriver';
   if (/\bvehicle\b/i.test(label)) return 'vehicle';
   if (/\b(?:applicant|household member)\b/i.test(label)) return 'applicant';
-  return null;
-}
-
-function operationalTarget(
-  control: PageObservation['controls'][number],
-): TrainingControlSnapshot['operationalTarget'] {
-  const description = [control.section, control.label, ...control.context].join(' ');
-  if (/\bcarrier\s*(?:code|id|identifier|number|name)\b/i.test(description))
-    return 'carrier_operational';
-  if (
-    /\b(?:agency|agent|producer|office|branch)\s*(?:code|id|identifier|number|name)\b/i.test(
-      description,
-    )
-  )
-    return 'agency_operational';
   return null;
 }
 
@@ -179,7 +165,7 @@ async function structuralControl(
     disabled: control.disabled,
     humanOnly: control.humanOnly || omitChoices,
     addEntityType: addEntityType(control),
-    operationalTarget: operationalTarget(control),
+    operationalTarget: await recognizedOperationalTarget({ label, section, context }),
     repeatHint: repeatHint(control),
     ...(control.ordinaryNext === undefined ? {} : { ordinaryNext: control.ordinaryNext }),
     choiceGroup,

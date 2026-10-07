@@ -111,6 +111,27 @@ const observation: PageObservation = {
 };
 
 describe('structural training observation', () => {
+  it('keeps unfamiliar operational-looking labels trainable without claiming fixed-value permission', async () => {
+    const structural = await structuralTrainingObservation({
+      ...observation,
+      controls: ['Demo Agent Code:*', 'Agent Name', 'Applicant'].map((label, index) => ({
+        ...observation.controls[1]!,
+        elementId: `e${index}`,
+        key: String(index).repeat(64),
+        label,
+        section: 'Policy',
+        context: ['Agency Code'],
+        value: '',
+      })),
+    });
+    expect(structural.controls.map((control) => control.operationalTarget)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(structural.controls.every((control) => control.label.startsWith('sha256:'))).toBe(true);
+  });
+
   it('omits customer values, validation text and page text', async () => {
     const structural = await structuralTrainingObservation(observation);
     const serialized = JSON.stringify(structural);

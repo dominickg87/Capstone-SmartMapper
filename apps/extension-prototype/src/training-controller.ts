@@ -1,19 +1,22 @@
 import { carrierOriginAllowed } from '@smartmapper/automation-core/active-tab';
+import { stablePageSignature, stableTargetSignature } from '@smartmapper/automation-core/registry';
 import {
   ActivateMappingResponseSchema,
   CaptureTrainingPageRequestSchema,
   MiaFieldCatalogSchema,
+  MappingProfileSchema,
   PageObservationSchema,
   PublishTrainingSessionResponseSchema,
   SaveTrainingPageRequestSchema,
   StartTrainingSessionSchema,
   TrainingPageResponseSchema,
   TrainingSessionResponseSchema,
+  TrainingLibraryResponseSchema,
   VerifyMappingRequestSchema,
   type MappingDisposition,
   type MappingLineOfBusiness,
   type MiaFieldCatalog,
-  type MappingProfile,
+  type PageObservation,
   type TrainingPage,
   type TrainingSessionView,
 } from '@smartmapper/contracts';
@@ -29,11 +32,16 @@ const TrainingBrowserSessionSchema = z
     training: z.custom<TrainingSessionView>(),
     token: z.string().min(1),
     catalog: z.custom<MiaFieldCatalog>(),
-    publishedMapping: z.custom<MappingProfile>().optional(),
+    publishedMapping: MappingProfileSchema.optional(),
     windowId: z.number().int(),
   })
   .strict();
 export type TrainingBrowserSession = z.infer<typeof TrainingBrowserSessionSchema>;
+export interface TrainingLibrary {
+  session: TrainingBrowserSession;
+  drafts: TrainingSessionView[];
+  mappings: z.infer<typeof MappingProfileSchema>[];
+}
 
 const GrantResponseSchema = z.object({ code: z.string().min(32).max(256) }).strict();
 
@@ -43,6 +51,38 @@ class TrainingApiError extends Error {
     message: string,
   ) {
     super(message);
+  }
+}
+
+function conflictMessage(code: string | undefined): string {
+  switch (code) {
+    case 'revision_conflict':
+    case 'training_conflict':
+      return 'The training draft changed. Reopen the panel to reload the saved draft before saving again.';
+    case 'unsafe_training_structure':
+      return 'The page capture was rejected because its field metadata did not pass validation. Reload the latest SmartMapper extension and capture this page again. (unsafe_training_structure)';
+    case 'duplicate_control':
+      return 'The page capture contains duplicate field identifiers. Capture this page again. (duplicate_control)';
+    case 'observation_expired':
+      return 'The page capture expired before it could be saved. Capture this page again.';
+    case 'binding_mismatch':
+      return 'Return to the carrier tab where this training draft started, then capture the page again.';
+    case 'authentication_required':
+      return 'Sign back into the carrier website, then capture the page again.';
+    case 'duplicate_training_page':
+      return 'This page or scenario is already captured. Select it from the captured-page list to edit its mappings.';
+    case 'training_expired':
+      return 'This training session expired. Start a new training session.';
+    case 'training_not_draft':
+      return 'This mapping has already left draft mode. Finish its test or start a new training draft.';
+    case 'recovery_requires_empty_draft':
+      return 'This recovery session already contains work. Find saved training again before choosing a record.';
+    case 'saved_training_catalog_changed':
+      return 'The M.I.A. field catalog changed since this draft was saved. The saved draft is preserved, but needs review before it can be resumed.';
+    case 'saved_training_not_draft':
+      return 'This draft was completed or cancelled. Find saved mappings and open its published version instead.';
+    default:
+      return 'The training service rejected this step. Your saved mappings remain available. Reopen the panel and try again.';
   }
 }
 
@@ -72,6 +112,7 @@ async function json(
       .passthrough()
       .safeParse(await response.json().catch(() => null));
     const serverMessage = detail.success ? detail.data.message || detail.data.error : undefined;
+    const code = detail.success ? detail.data.error : undefined;
     throw new TrainingApiError(
       response.status,
       response.status === 401
@@ -79,7 +120,7 @@ async function json(
         : response.status === 403
           ? 'This account is not authorized to train SmartMapper mappings.'
           : response.status === 409
-            ? 'The training draft changed. Reload the draft before saving again.'
+            ? conflictMessage(code)
             : response.status === 422
               ? serverMessage === 'mapping_test_coverage_incomplete'
                 ? 'This test has not covered every trained page and mapped field yet. Continue the carrier workflow, then Resume mapping.'
@@ -151,14 +192,52 @@ async function saveTrainingSession(session: TrainingBrowserSession): Promise<voi
   await chrome.storage.session.set({ training: session });
 }
 
-function markersFor(page: TrainingPage): TrainingMarker[] {
+export async function trainingMarkersFor(
+  page: TrainingPage,
+  observation: PageObservation,
+): Promise<TrainingMarker[]> {
+  const structure = await structuralTrainingObservation(observation);
+  if (
+    structure.routeId !== page.routeId ||
+    (await stablePageSignature(structure)) !== page.signature
+  )
+    return [];
+  // DOM identifiers and rectangles belong to an observation, never to a saved workflow. Resolve
+  // numbered fields against the current document before drawing or focusing an overlay.
+  const liveBySignature = new Map<string, PageObservation['controls']>();
+  const radioGroups = new Set<string>();
+  for (const control of [...observation.controls].sort(
+    (a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+  )) {
+    if ((control.inputType === 'radio' || control.role === 'radio') && control.choiceGroup) {
+      const key = `${control.choiceGroup.key}\0${control.choiceGroup.label}\0${control.section}`;
+      if (radioGroups.has(key)) continue;
+      radioGroups.add(key);
+    }
+    const signature = await stableTargetSignature(control);
+    const candidates = liveBySignature.get(signature) ?? [];
+    candidates.push(control);
+    liveBySignature.set(signature, candidates);
+  }
+  const resolved = new Map<string, PageObservation['controls'][number]>();
+  for (const field of page.fields) {
+    const candidate = liveBySignature.get(await stableTargetSignature(field.control))?.[
+      field.occurrence
+    ];
+    if (candidate && !candidate.disabled) resolved.set(field.fieldId, candidate);
+  }
+  for (const control of page.workflowControls) {
+    const candidates = liveBySignature.get(await stableTargetSignature(control.control));
+    if (candidates?.length === 1 && !candidates[0]!.disabled)
+      resolved.set(`workflow-${control.workflowControlId}`, candidates[0]!);
+  }
   const fields = page.fields
-    .filter((field) => !field.control.disabled && !field.control.ordinaryNext)
+    .filter((field) => resolved.has(field.fieldId))
     .map((field) =>
       markerFromControl(
         field.fieldId,
         field.sequence,
-        field.control,
+        resolved.get(field.fieldId)!,
         field.disposition === null
           ? 'unmapped'
           : field.disposition.kind === 'source' || field.disposition.kind === 'fixed_value'
@@ -169,12 +248,12 @@ function markersFor(page: TrainingPage): TrainingMarker[] {
       ),
     );
   const workflowControls = page.workflowControls
-    .filter((control) => !control.control.disabled)
+    .filter((control) => resolved.has(`workflow-${control.workflowControlId}`))
     .map((control) =>
       markerFromControl(
         `workflow-${control.workflowControlId}`,
         control.sequence,
-        control.control,
+        resolved.get(`workflow-${control.workflowControlId}`)!,
         control.decision === null ? 'unmapped' : control.decision === 'use' ? 'mapped' : 'ignored',
       ),
     );
@@ -221,8 +300,14 @@ export class TrainingController {
     const next = { ...session, training: response.training };
     await saveTrainingSession(next);
     const current = next.training.pages.at(-1);
-    if (current) await this.showPage(current);
+    if (current) await this.showPage(current).catch(() => undefined);
     return next;
+  }
+
+  public async boundToCurrentTab(session: TrainingBrowserSession): Promise<boolean> {
+    return await activeCarrierTab(session)
+      .then(() => true)
+      .catch(() => false);
   }
 
   public async start(
@@ -232,6 +317,15 @@ export class TrainingController {
   ): Promise<TrainingBrowserSession> {
     if ((await trainingSession()) !== null)
       throw new Error('Finish or cancel the existing training draft first.');
+    const session = await this.authorize(formType, requestedBaseUrl);
+    await saveTrainingSession(session);
+    return session;
+  }
+
+  private async authorize(
+    formType: MappingLineOfBusiness,
+    requestedBaseUrl?: string,
+  ): Promise<TrainingBrowserSession> {
     const token = await miaToken();
     if (!token) throw new Error('Connect to M.I.A. before starting training.');
     const tab = await activeCarrierTab();
@@ -278,8 +372,67 @@ export class TrainingController {
       catalog,
       windowId: tab.windowId,
     };
-    await saveTrainingSession(session);
     return session;
+  }
+
+  public async findSaved(formType: MappingLineOfBusiness): Promise<TrainingLibrary> {
+    const session = await this.authorize(formType);
+    const library = TrainingLibraryResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${session.training.trainingId}/library`,
+        session.token,
+      ),
+    );
+    // Keep the current local draft intact until the user explicitly chooses a saved record.
+    return { session, ...library };
+  }
+
+  public async recoverDraft(
+    library: TrainingLibrary,
+    trainingId: string,
+  ): Promise<TrainingBrowserSession> {
+    await activeCarrierTab(library.session);
+    const response = TrainingSessionResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${library.session.training.trainingId}/recover`,
+        library.session.token,
+        'POST',
+        { revision: library.session.training.revision, trainingId },
+      ),
+    );
+    const next = { ...library.session, training: response.training };
+    await saveTrainingSession(next);
+    for (const page of next.training.pages) {
+      if (await this.showPage(page).catch(() => false)) break;
+    }
+    return next;
+  }
+
+  public async openSavedMapping(
+    library: TrainingLibrary,
+    mappingId: string,
+    mappingVersion: number,
+  ): Promise<TrainingBrowserSession> {
+    await activeCarrierTab(library.session);
+    const response = PublishTrainingSessionResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${library.session.training.trainingId}/open`,
+        library.session.token,
+        'POST',
+        { revision: library.session.training.revision, mappingId, mappingVersion },
+      ),
+    );
+    const next = {
+      ...library.session,
+      training: response.training,
+      publishedMapping: response.mapping,
+    };
+    await saveTrainingSession(next);
+    await this.clearOverlay();
+    return next;
   }
 
   public async capture(
@@ -322,7 +475,7 @@ export class TrainingController {
     );
     const next = { ...session, training: response.training };
     await saveTrainingSession(next);
-    await this.showPage(response.page);
+    await this.showPage(response.page).catch(() => undefined);
     return next;
   }
 
@@ -359,7 +512,7 @@ export class TrainingController {
     );
     const next = { ...session, training: response.training };
     await saveTrainingSession(next);
-    await this.showPage(response.page);
+    await this.showPage(response.page).catch(() => undefined);
     return next;
   }
 
@@ -458,14 +611,26 @@ export class TrainingController {
     await this.clearOverlay();
   }
 
-  public async showPage(page: TrainingPage): Promise<void> {
+  public async showPage(page: TrainingPage): Promise<boolean> {
     const session = await trainingSession();
-    if (!session) return;
+    if (!session) return false;
     const tab = await activeCarrierTab(session);
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      files: ['content.js'],
+    });
+    const observation = PageObservationSchema.parse(
+      await chrome.tabs.sendMessage(tab.id, {
+        type: 'training-observe',
+        tabId: tab.id,
+      }),
+    );
+    const markers = await trainingMarkersFor(page, observation);
     await chrome.tabs.sendMessage(tab.id, {
       type: 'show-training-overlay',
-      markers: markersFor(page),
+      markers,
     });
+    return markers.length > 0;
   }
 
   public async focus(fieldId: string): Promise<void> {

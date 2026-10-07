@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   PageControl,
   PageObservation,
@@ -213,6 +213,216 @@ const grant = (tabId: number): RedeemedTrainingGrant => ({
       },
     ],
   },
+});
+
+afterEach(() => vi.useRealTimers());
+
+function recoveryHarness() {
+  const identity = { tenant: 'tenant', user: 'user', catalogRevision: 'home-1' };
+  const store = new MemoryTrainingSessionStore();
+  const registry = new MemoryMappingRegistryStore();
+  const service = new TrainingService(
+    store,
+    {
+      redeem: (request) => {
+        const redeemed = grant(request.tabId);
+        redeemed.binding = {
+          ...redeemed.binding,
+          tenantId: identity.tenant,
+          userId: identity.user,
+          carrierOrigin: request.carrierOrigin,
+          formType: request.formType,
+        };
+        redeemed.catalog = {
+          ...redeemed.catalog,
+          formType: request.formType,
+          schemaRevision: identity.catalogRevision,
+        };
+        return Promise.resolve(redeemed);
+      },
+    },
+    registry,
+    {
+      miaOrigins: new Set([miaOrigin]),
+      carrierOrigins: new Set([carrierOrigin, 'https://other-carrier.test']),
+      principals: new Set(['tenant/user', 'tenant/other', 'other-tenant/user']),
+    },
+    new MemoryCheckpointStore(),
+  );
+  const start = (tabId: number, formType: 'home' | 'auto' = 'home', origin = carrierOrigin) =>
+    service.start({
+      miaOrigin,
+      code: 'c'.repeat(32),
+      verifier: 'v'.repeat(43),
+      carrierOrigin: origin,
+      carrierBaseUrl: origin,
+      tabId,
+      formType,
+      workflowName: 'Synthetic workflow',
+    });
+  const savedDraft = async () => {
+    const session = await start(7);
+    const capture = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), [field({})]),
+    });
+    const saved = await service.savePage(
+      session.training.trainingId,
+      capture.page.pageId,
+      session.token,
+      {
+        revision: capture.training.revision,
+        fields: [{ fieldId: capture.page.fields[0]!.fieldId, disposition: { kind: 'ignore' } }],
+        workflowControls: [],
+      },
+    );
+    return { ...session, training: saved.training };
+  };
+  return { identity, service, store, registry, start, savedDraft };
+}
+
+describe('saved training recovery', () => {
+  it('copies saved numbered choices into a fresh tab authorization without changing the original', async () => {
+    const { service, start, savedDraft } = recoveryHarness();
+    const old = await savedDraft();
+    const fresh = await start(19);
+    const library = await service.library(fresh.training.trainingId, fresh.token);
+    expect(library.drafts).toEqual([old.training]);
+    expect(JSON.stringify(library)).not.toContain('tokenHash');
+    expect(JSON.stringify(library)).not.toContain(old.token);
+    const recovered = await service.recover(fresh.training.trainingId, fresh.token, {
+      revision: 0,
+      trainingId: old.training.trainingId,
+    });
+    expect(recovered.training).toMatchObject({
+      trainingId: fresh.training.trainingId,
+      revision: 1,
+      binding: { tabId: 19 },
+      status: 'draft',
+      mappingId: null,
+    });
+    expect(recovered.training.pages).toEqual(old.training.pages);
+    expect(await service.read(old.training.trainingId, old.token)).toEqual(old.training);
+    await expect(
+      service.capture(fresh.training.trainingId, fresh.token, {
+        revision: 1,
+        observation: trainingObservation(7, 'page-two', '2'.repeat(64), [field({})]),
+      }),
+    ).rejects.toMatchObject({ code: 'binding_mismatch' });
+  });
+
+  it('recovers durable draft metadata after the original capability expires using fresh authorization', async () => {
+    vi.useFakeTimers();
+    const { service, start, savedDraft } = recoveryHarness();
+    const old = await savedDraft();
+    vi.setSystemTime(Date.now() + 9 * 60 * 60_000);
+    await expect(service.read(old.training.trainingId, old.token)).rejects.toMatchObject({
+      code: 'training_expired',
+    });
+    const fresh = await start(19);
+    expect((await service.library(fresh.training.trainingId, fresh.token)).drafts).toHaveLength(1);
+    expect(
+      (
+        await service.recover(fresh.training.trainingId, fresh.token, {
+          revision: 0,
+          trainingId: old.training.trainingId,
+        })
+      ).training.binding.expiresAt,
+    ).toBe(fresh.training.binding.expiresAt);
+  });
+
+  it.each(['user', 'tenant', 'carrier', 'lob'] as const)(
+    'isolates saved drafts by %s',
+    async (different) => {
+      const { identity, service, start, savedDraft } = recoveryHarness();
+      const old = await savedDraft();
+      if (different === 'user') identity.user = 'other';
+      if (different === 'tenant') identity.tenant = 'other-tenant';
+      const fresh = await start(
+        19,
+        different === 'lob' ? 'auto' : 'home',
+        different === 'carrier' ? 'https://other-carrier.test' : carrierOrigin,
+      );
+      expect((await service.library(fresh.training.trainingId, fresh.token)).drafts).toEqual([]);
+      await expect(
+        service.recover(fresh.training.trainingId, fresh.token, {
+          revision: 0,
+          trainingId: old.training.trainingId,
+        }),
+      ).rejects.toMatchObject({ code: 'saved_training_not_found' });
+    },
+  );
+
+  it('rejects stale revisions, changed catalogs and overwriting a nonempty recovery target', async () => {
+    const { identity, service, start, savedDraft } = recoveryHarness();
+    const old = await savedDraft();
+    const fresh = await start(19);
+    await expect(
+      service.recover(fresh.training.trainingId, fresh.token, {
+        revision: 1,
+        trainingId: old.training.trainingId,
+      }),
+    ).rejects.toThrow('revision_conflict');
+    identity.catalogRevision = 'home-2';
+    const changed = await start(20);
+    await expect(
+      service.recover(changed.training.trainingId, changed.token, {
+        revision: 0,
+        trainingId: old.training.trainingId,
+      }),
+    ).rejects.toMatchObject({ code: 'saved_training_catalog_changed' });
+    await service.recover(fresh.training.trainingId, fresh.token, {
+      revision: 0,
+      trainingId: old.training.trainingId,
+    });
+    await expect(
+      service.recover(fresh.training.trainingId, fresh.token, {
+        revision: 1,
+        trainingId: old.training.trainingId,
+      }),
+    ).rejects.toMatchObject({ code: 'recovery_requires_empty_draft' });
+    await expect(service.library(fresh.training.trainingId, old.token)).rejects.toMatchObject({
+      code: 'unauthorized',
+    });
+  });
+
+  it('reopens an exact published version for testing and preserves the verification gate', async () => {
+    const { service, start, savedDraft } = recoveryHarness();
+    const old = await savedDraft();
+    const published = await service.publish(old.training.trainingId, old.token, {
+      revision: old.training.revision,
+    });
+    const fresh = await start(19);
+    const library = await service.library(fresh.training.trainingId, fresh.token);
+    expect(library.drafts).toEqual([]);
+    expect(library.mappings).toEqual([published.mapping]);
+    const opened = await service.openMapping(fresh.training.trainingId, fresh.token, {
+      revision: 0,
+      mappingId: published.mapping.mappingId,
+      mappingVersion: published.mapping.mappingVersion,
+    });
+    expect(opened.mapping).toEqual(published.mapping);
+    expect(opened.training).toMatchObject({
+      binding: { tabId: 19 },
+      status: 'testable',
+      mappingId: published.mapping.mappingId,
+    });
+    await expect(
+      service.activate(fresh.training.trainingId, fresh.token, {
+        revision: opened.training.revision,
+        mappingVersion: published.mapping.mappingVersion,
+      }),
+    ).rejects.toThrow();
+    const other = await start(20, 'auto');
+    expect((await service.library(other.training.trainingId, other.token)).mappings).toEqual([]);
+    await expect(
+      service.openMapping(other.training.trainingId, other.token, {
+        revision: 0,
+        mappingId: published.mapping.mappingId,
+        mappingVersion: published.mapping.mappingVersion,
+      }),
+    ).rejects.toMatchObject({ code: 'saved_mapping_not_found' });
+  });
 });
 
 describe('training service', () => {

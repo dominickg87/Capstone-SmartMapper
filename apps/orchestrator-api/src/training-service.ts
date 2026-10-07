@@ -4,12 +4,15 @@ import { DefaultAzureCredential } from '@azure/identity';
 import { TableClient } from '@azure/data-tables';
 import {
   CaptureTrainingPageRequestSchema,
+  OpenSavedMappingRequestSchema,
+  RecoverTrainingDraftRequestSchema,
   ActivateMappingRequestSchema,
   PublishTrainingSessionRequestSchema,
   SaveTrainingPageRequestSchema,
   StartTrainingSessionSchema,
   TrainingPageSchema,
   TrainingSessionViewSchema,
+  TrainingLibraryResponseSchema,
   VerifyMappingRequestSchema,
   type MappingDisposition,
   type MappingProfile,
@@ -25,6 +28,7 @@ import {
   canonicalControlInputType,
   canonicalControlRole,
   isSemanticHash,
+  recognizedOperationalTarget,
   stableLocator,
   stablePageSignature,
   stableTargetSignature,
@@ -52,6 +56,7 @@ interface StoredTrainingRecord {
 export interface TrainingSessionStore {
   create(partition: string, trainingId: string, value: TrainingRecord): Promise<void>;
   read(partition: string, trainingId: string): Promise<StoredTrainingRecord | null>;
+  list(partition: string): Promise<StoredTrainingRecord[]>;
   replace(
     partition: string,
     trainingId: string,
@@ -88,6 +93,13 @@ export class MemoryTrainingSessionStore implements TrainingSessionStore {
     if (!current || current.etag !== etag) throw new ConflictError('training_conflict');
     this.records.set(key, { value: structuredClone(value), etag: String(Number(etag) + 1) });
     return Promise.resolve();
+  }
+  public list(partition: string): Promise<StoredTrainingRecord[]> {
+    return Promise.resolve(
+      [...this.records.entries()]
+        .filter(([key]) => key.startsWith(`${partition}/`))
+        .map(([, record]) => structuredClone(record)),
+    );
   }
   public delete(partition: string, trainingId: string, etag: string): Promise<void> {
     const key = this.key(partition, trainingId);
@@ -126,6 +138,20 @@ export class AzureTrainingSessionStore implements TrainingSessionStore {
   }
   public async create(partition: string, trainingId: string, value: TrainingRecord): Promise<void> {
     await this.client.createEntity(this.entity(partition, trainingId, value));
+  }
+  public async list(partition: string): Promise<StoredTrainingRecord[]> {
+    if (!/^[a-f0-9]{64}$/.test(partition)) throw new Error('invalid_training_partition');
+    const records: StoredTrainingRecord[] = [];
+    for await (const entity of this.client.listEntities<Record<string, unknown>>({
+      queryOptions: { filter: `PartitionKey eq '${partition}' and recordType eq 'training'` },
+    })) {
+      const payload = Array.from({ length: Number(entity.chunks) }, (_, index) =>
+        String(entity[`payload${index}`]),
+      ).join('');
+      if (!entity.etag) throw new Error('missing_etag');
+      records.push({ value: JSON.parse(payload) as TrainingRecord, etag: entity.etag });
+    }
+    return records;
   }
   public async read(partition: string, trainingId: string): Promise<StoredTrainingRecord | null> {
     try {
@@ -511,11 +537,11 @@ function mappingTransformAllowed(
   return true;
 }
 
-function dispositionAllowedForTarget(
+async function dispositionAllowedForTarget(
   disposition: MappingDisposition,
   field: TrainingField,
-): boolean {
-  const operationalTarget = recognizedOperationalTarget(field.control);
+): Promise<boolean> {
+  const operationalTarget = await recognizedOperationalTarget(field.control);
   if (disposition.kind === 'fixed_value') {
     const compactIdentifier =
       (typeof disposition.value === 'string' &&
@@ -540,38 +566,7 @@ function persistedSemanticString(value: string): boolean {
   return value.length === 0 || isSemanticHash(value);
 }
 
-const semanticHash = (value: string): string =>
-  `sha256:${digest(value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase())}`;
-const agencyActorHashes = new Set(
-  ['agency', 'agent', 'producer', 'office', 'branch'].map(semanticHash),
-);
-const carrierActorHashes = new Set(['carrier'].map(semanticHash));
-const identifierHashes = new Set(['code', 'id', 'identifier', 'number'].map(semanticHash));
-const exactAgencyOperationalHashes = new Set(
-  ['agency', 'agent', 'producer', 'office', 'branch'].flatMap((actor) =>
-    ['code', 'id', 'identifier', 'number'].map((identifier) =>
-      semanticHash(`${actor} ${identifier}`),
-    ),
-  ),
-);
-const exactCarrierOperationalHashes = new Set(
-  ['code', 'id', 'identifier', 'number'].map((identifier) => semanticHash(`carrier ${identifier}`)),
-);
-
-function recognizedOperationalTarget(
-  control: TrainingControlSnapshot,
-): 'agency_operational' | 'carrier_operational' | null {
-  if (exactAgencyOperationalHashes.has(control.label)) return 'agency_operational';
-  if (exactCarrierOperationalHashes.has(control.label)) return 'carrier_operational';
-  if (!identifierHashes.has(control.label)) return null;
-  const surrounding = new Set([control.section, ...control.context]);
-  if ([...surrounding].some((value) => agencyActorHashes.has(value))) return 'agency_operational';
-  return [...surrounding].some((value) => carrierActorHashes.has(value))
-    ? 'carrier_operational'
-    : null;
-}
-
-function privacySafeTrainingControl(control: TrainingControlSnapshot): boolean {
+async function privacySafeTrainingControl(control: TrainingControlSnapshot): Promise<boolean> {
   return (
     /^e\d+$/.test(control.elementId) &&
     /^[a-f0-9]{64}$/.test(control.key) &&
@@ -587,14 +582,14 @@ function privacySafeTrainingControl(control: TrainingControlSnapshot): boolean {
     control.options.every(
       (option) => persistedSemanticString(option.value) && persistedSemanticString(option.label),
     ) &&
-    control.operationalTarget === recognizedOperationalTarget(control)
+    control.operationalTarget === (await recognizedOperationalTarget(control))
   );
 }
 
-function trainingBindingProblem(
+async function trainingBindingProblem(
   observation: TrainingPageObservation,
   binding: TrainingSessionView['binding'],
-): string | null {
+): Promise<string | null> {
   if (Date.parse(binding.expiresAt) <= Date.now()) return 'training_expired';
   if (observation.origin !== binding.carrierOrigin || observation.tabId !== binding.tabId)
     return 'binding_mismatch';
@@ -612,7 +607,8 @@ function trainingBindingProblem(
     observation.controls.length
   )
     return 'duplicate_control';
-  if (!observation.controls.every(privacySafeTrainingControl)) return 'unsafe_training_structure';
+  if (!(await Promise.all(observation.controls.map(privacySafeTrainingControl))).every(Boolean))
+    return 'unsafe_training_structure';
   return null;
 }
 
@@ -722,6 +718,79 @@ export class TrainingService {
     return TrainingSessionViewSchema.parse((await this.authorized(trainingId, token)).value.view);
   }
 
+  public async library(trainingId: string, token: string) {
+    const record = await this.authorized(trainingId, token);
+    const view = record.value.view;
+    const records = await this.store.list(record.partition);
+    const drafts = records
+      .map((item) => item.value.view)
+      .filter(
+        (candidate) =>
+          candidate.trainingId !== trainingId &&
+          candidate.status === 'draft' &&
+          candidate.pages.length > 0 &&
+          this.sameTrainerScope(candidate, view),
+      )
+      .sort((left, right) => right.binding.expiresAt.localeCompare(left.binding.expiresAt))
+      .slice(0, 500);
+    const mappings = (await this.registry.list(this.scope(view)))
+      .filter((mapping) => ['testable', 'verified', 'active'].includes(mapping.status))
+      .sort((left, right) => right.publishedAt.localeCompare(left.publishedAt))
+      .slice(0, 500);
+    // Return value-free views only; never expose another session's capability or token hash.
+    return TrainingLibraryResponseSchema.parse({ drafts, mappings });
+  }
+
+  private sameTrainerScope(left: TrainingSessionView, right: TrainingSessionView): boolean {
+    return (
+      left.binding.tenantId === right.binding.tenantId &&
+      left.binding.userId === right.binding.userId &&
+      left.binding.carrierOrigin === right.binding.carrierOrigin &&
+      left.binding.formType === right.binding.formType
+    );
+  }
+
+  private assertEmptyDraft(view: TrainingSessionView, revision: number): void {
+    if (revision !== view.revision) throw new ConflictError('revision_conflict');
+    if (view.status !== 'draft' || view.pages.length || view.mappingId)
+      throw new ApiError(409, 'recovery_requires_empty_draft');
+  }
+
+  public async recover(trainingId: string, token: string, input: unknown) {
+    const request = RecoverTrainingDraftRequestSchema.parse(input);
+    const record = await this.authorized(trainingId, token);
+    this.assertEmptyDraft(record.value.view, request.revision);
+    const donor = await this.store.read(record.partition, request.trainingId);
+    if (!donor || !this.sameTrainerScope(donor.value.view, record.value.view))
+      throw new ApiError(404, 'saved_training_not_found');
+    if (donor.value.view.status !== 'draft' || donor.value.view.pages.length === 0)
+      throw new ApiError(409, 'saved_training_not_draft');
+    if (donor.value.view.catalogRevision !== record.value.view.catalogRevision)
+      throw new ApiError(409, 'saved_training_catalog_changed');
+    // The old authorization may have expired. Fresh M.I.A. authorization permits recovery of
+    // its durable, value-free draft; the old tab, token and expiry are never reused or changed.
+    record.value.view.pages = structuredClone(donor.value.view.pages);
+    record.value.view.workflow = structuredClone(donor.value.view.workflow);
+    return { training: await this.save(record.partition, trainingId, record) };
+  }
+
+  public async openMapping(trainingId: string, token: string, input: unknown) {
+    const request = OpenSavedMappingRequestSchema.parse(input);
+    const record = await this.authorized(trainingId, token);
+    this.assertEmptyDraft(record.value.view, request.revision);
+    const mapping = await this.registry.get(
+      this.scope(record.value.view),
+      request.mappingId,
+      request.mappingVersion,
+    );
+    if (!mapping || !['testable', 'verified', 'active'].includes(mapping.status))
+      throw new ApiError(404, 'saved_mapping_not_found');
+    record.value.view.mappingId = mapping.mappingId;
+    record.value.view.workflow = structuredClone(mapping.workflow);
+    record.value.view.status = mapping.status === 'testable' ? 'testable' : 'verified';
+    return { training: await this.save(record.partition, trainingId, record), mapping };
+  }
+
   public async cancel(trainingId: string, token: string): Promise<void> {
     const record = await this.authorized(trainingId, token);
     record.value.view.status = 'cancelled';
@@ -738,7 +807,7 @@ export class TrainingService {
     if (request.revision !== record.value.view.revision)
       throw new ConflictError('revision_conflict');
     if (record.value.view.status !== 'draft') throw new ConflictError('training_not_draft');
-    const problem = trainingBindingProblem(request.observation, record.value.view.binding);
+    const problem = await trainingBindingProblem(request.observation, record.value.view.binding);
     if (problem) throw new ApiError(409, problem);
     const pages = record.value.view.pages;
     const nextField =
@@ -805,7 +874,7 @@ export class TrainingService {
         throw new ApiError(400, 'unknown_mia_catalog_field');
       if (!mappingTransformAllowed(update.disposition, field, record.value.catalog))
         throw new ApiError(400, 'incompatible_mapping_transform');
-      if (!dispositionAllowedForTarget(update.disposition, field))
+      if (!(await dispositionAllowedForTarget(update.disposition, field)))
         throw new ApiError(400, 'unsafe_mapping_disposition');
       if (field.control.humanOnly && update.disposition.kind !== 'human_required')
         throw new ApiError(400, 'human_only_field');

@@ -9,10 +9,17 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
-The current extension is **0.3.1**; the backend remains **0.3.0**. The extension patch issues the
-panel-open request directly from the toolbar click, reconciles saved tab ownership afterward, and
-reports opening failures with a redacted reason code and a toolbar badge. Opening the panel does not
-require a running backend or M.I.A. deployment.
+The current extension and backend are **0.3.3**. Saved drafts and completed mappings can be found from
+a reopened carrier tab using fresh M.I.A. training authorization. Original capabilities and jobs stay
+bound to their original tab; recovery preserves numbered choices in a new training session. Saved
+overlays resolve current DOM targets instead of reusing stale identifiers. See
+[ADR 0019](docs/adr/0019-saved-training-recovery.md).
+
+Training captures use one shared operational-field
+classification rule at both ends of the API. Unfamiliar labels remain trainable without gaining
+permission for fixed values or carrier defaults. Capture errors identify the actual rejection reason
+instead of treating every HTTP 409 as a stale draft. The toolbar still opens the panel directly from
+the click; opening it does not require a running backend or M.I.A. deployment.
 
 ## How it works
 
@@ -51,7 +58,8 @@ enabled. Final Submit, Bind, Issue, Sell, payment, authentication, consent, atte
 CAPTCHA, and MFA remain human actions.
 
 The side panel opens only for the carrier tab on which the toolbar icon was activated. Jobs and
-training drafts remain bound to that tab and origin.
+training capabilities remain bound to that tab and origin. **Train → Find saved training and mappings**
+recovers durable drafts or opens a published version for testing on a newly authorized tab.
 
 ## Components
 

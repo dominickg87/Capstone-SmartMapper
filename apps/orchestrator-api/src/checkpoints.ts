@@ -152,6 +152,7 @@ export class AzureCheckpointStore implements CheckpointStore {
     return {
       partitionKey: partition,
       rowKey: jobId,
+      recordType: 'job',
       expiresAt: value.view.binding.expiresAt,
       chunks: chunks.length,
       ...Object.fromEntries(chunks.map((chunk, index) => ['payload' + index, chunk])),
@@ -199,7 +200,14 @@ export class AzureCheckpointStore implements CheckpointStore {
       queryOptions: { filter: odata`expiresAt lt ${now}`, select: ['PartitionKey', 'RowKey'] },
     });
     for await (const entity of entities) {
-      if (entity.partitionKey && entity.rowKey && entity.etag) {
+      // Training drafts share this table but outlive their tab-bound capabilities. Only job
+      // UUID rows belong to this cleanup; training-* rows are durable, value-free metadata.
+      if (
+        entity.partitionKey &&
+        entity.rowKey &&
+        /^[a-f0-9-]{36}$/.test(entity.rowKey) &&
+        entity.etag
+      ) {
         try {
           await this.client.deleteEntity(entity.partitionKey, entity.rowKey, { etag: entity.etag });
         } catch (error) {

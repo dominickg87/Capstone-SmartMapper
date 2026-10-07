@@ -9,6 +9,7 @@ import type {
 } from '@smartmapper/contracts';
 import {
   compileRegistryPage,
+  recognizedOperationalTarget,
   semanticTextDigest,
   stableLocator,
   stablePageSignature,
@@ -16,6 +17,34 @@ import {
 } from './registry.js';
 
 const now = new Date().toISOString();
+
+describe('operational identifier recognition', () => {
+  it.each([
+    ['Agency Code', 'Policy', [], 'agency_operational'],
+    ['Carrier Number', 'Policy', [], 'carrier_operational'],
+    ['Code', 'Agent', [], 'agency_operational'],
+    ['Identifier', 'Policy', ['Carrier'], 'carrier_operational'],
+    ['Demo Agent Code:*', 'Policy', [], null],
+    ['Applicant', 'Agency Code', [], null],
+    ['Agent Name', 'Policy', [], null],
+    ['Agent', 'Policy', [], null],
+    ['Date of birth', 'Applicant', ['Agency Code'], null],
+  ] as const)(
+    'classifies %s identically before and after hashing',
+    async (label, section, context, expected) => {
+      const live = { label, section, context: [...context] };
+      const semantic = async (value: string) =>
+        value ? `sha256:${await semanticTextDigest(value)}` : '';
+      const persisted = {
+        label: await semantic(label),
+        section: await semantic(section),
+        context: await Promise.all(context.map(semantic)),
+      };
+      expect(await recognizedOperationalTarget(live)).toBe(expected);
+      expect(await recognizedOperationalTarget(persisted)).toBe(expected);
+    },
+  );
+});
 const control = (overrides: Partial<PageControl> = {}): PageControl => ({
   elementId: crypto.randomUUID(),
   key: crypto.randomUUID(),

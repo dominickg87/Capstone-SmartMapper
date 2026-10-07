@@ -599,3 +599,25 @@ export const MappingProfileResponseSchema = z.object({ mapping: MappingProfileSc
 export const MappingProfilesResponseSchema = z
   .object({ mappings: z.array(MappingProfileSchema).max(500) })
   .strict();
+
+export const TrainingLibraryResponseSchema = z
+  .object({
+    drafts: z.array(TrainingSessionViewSchema).max(500),
+    mappings: z.array(MappingProfileSchema).max(500),
+  })
+  .strict();
+
+export const RecoverTrainingDraftRequestSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    trainingId: z.string().uuid(),
+  })
+  .strict();
+
+export const OpenSavedMappingRequestSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    mappingId: z.string().uuid(),
+    mappingVersion: z.number().int().positive(),
+  })
+  .strict();
