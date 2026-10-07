@@ -52,6 +52,13 @@ Extension tests cover:
   trainer-supplied identity names or variants; and
 - a side panel visible only on the tab where the extension toolbar icon was activated.
 
+`tab-panel.test.ts` checks that panel opening occurs directly inside the toolbar click before any
+storage read settles, durable owner cleanup after worker restart, rapid activation races, site/tab
+cleanup, and redacted opening errors. `tests/e2e/tab-panel.e2e.spec.ts` triggers the actual Chrome
+toolbar action on a synthetic carrier, reads the real side-panel DOM, verifies the loaded package
+version and Map/Train modes without backend access, transfers ownership between tabs, and disables
+the panel after a site change. It never opens a substitute panel in a regular browser tab.
+
 Training browser fixtures include both Home applicants and the supported Auto maxima of five
 additional drivers and eight vehicles. The field sequence must remain stable when a framework
 rerenders, while persistent matching must not depend on that display sequence.

@@ -1,5 +1,11 @@
 # Current decisions — September 30, 2026
 
+- October 7, extension 0.3.1: Dom reported that the 0.3.0 toolbar did not open the side panel.
+  Panel opening now runs directly inside the toolbar click before storage callbacks. Saved owner
+  reconciliation remains resumable, rapid tab activations cannot disable the newest owner, and
+  failures expose redacted reason codes plus a toolbar badge. Synthetic browser coverage exercises
+  the real toolbar and panel. The backend remains 0.3.0; panel opening needs no M.I.A./Azure cutover.
+
 - October 6, build 0.3.0: Dom replaced the active Astra/PDF mapping experiment with a
   human-trained deterministic registry; see ADR 0018. Training covers Home and Auto, including every
   supported repeated applicant, driver, and vehicle field. Carrier fields receive obvious linked

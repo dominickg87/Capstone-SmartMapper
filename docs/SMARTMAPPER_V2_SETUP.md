@@ -1,6 +1,6 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys build **0.3.0**, the human-trained deterministic mapping registry accepted in
+This guide deploys backend **0.3.0** and extension **0.3.1**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -165,11 +165,19 @@ pnpm test:e2e
 
 Open `chrome://extensions`, enable Developer mode, and **Load unpacked** from
 `apps/extension-prototype/dist`. For an existing load, click **Reload**, close the old panel, and open
-it again. Confirm **Version 0.3.0** in the panel and on Chrome's extension card.
+it again. Confirm **Version 0.3.1** in the panel and on Chrome's extension card.
 
 Click the toolbar icon on the carrier tab. The panel stays attached only to that activated tab.
 Connect to M.I.A. through the normal agency sign-in. **Connection details** supplies the extension ID
 and M.I.A. tenant/user scope without exposing its bearer token.
+
+Opening the panel does not require deploying M.I.A. or the Azure backend. Those paired deployments
+are needed for retrieving field catalogs, saving training, and running registry-backed mapping.
+If the panel does not open, check that Chrome's extension card shows 0.3.1, close any stale panel,
+return to a normal HTTP/HTTPS carrier tab, and click this POC's toolbar icon. Restricted pages such
+as `chrome://extensions` cannot activate the carrier panel. An opening failure shows a `!` badge;
+the extension service worker console records only `smartmapper.panel` and a reason code such as
+`panel_open_failed`, without carrier URLs or raw error text.
 
 Reconnect once after deploying the M.I.A. branch so the extension receives the new separate
 `smart-map:map` and `smart-map:training` abilities.

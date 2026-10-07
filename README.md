@@ -9,6 +9,11 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
+The current extension is **0.3.1**; the backend remains **0.3.0**. The extension patch issues the
+panel-open request directly from the toolbar click, reconciles saved tab ownership afterward, and
+reports opening failures with a redacted reason code and a toolbar badge. Opening the panel does not
+require a running backend or M.I.A. deployment.
+
 ## How it works
 
 The side panel has **Map** and **Train** modes.
