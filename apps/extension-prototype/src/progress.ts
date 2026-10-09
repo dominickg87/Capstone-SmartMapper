@@ -1,5 +1,8 @@
 import {
   DiagnosticEventSchema,
+  DiagnosticApiReasonSchema,
+  type ActionReceipt,
+  type AutomationActionV2,
   diagnosticCode,
   type DiagnosticCounts,
   type DiagnosticEvent,
@@ -77,12 +80,16 @@ export class ProgressTracker {
       this.state.current.stage !== 'request'
     )
       start = this.state.current;
+    const detail =
+      error && typeof error === 'object' && 'apiReason' in error ? error.apiReason : undefined;
+    const reason = DiagnosticApiReasonSchema.safeParse(detail);
     const event: DiagnosticEvent = {
       ...start,
       id: crypto.randomUUID(),
       at: new Date().toISOString(),
       elapsedMs: Math.max(0, Date.now() - Date.parse(start.at)),
       phase: error === undefined ? 'end' : 'error',
+      ...(reason.success ? { apiReason: reason.data } : {}),
       ...(error === undefined ? {} : { code: diagnosticCode(error) }),
     };
     const existingFailure = this.state.failure;
@@ -91,6 +98,30 @@ export class ProgressTracker {
       this.state.failure = existingFailure;
       this.publish();
     }
+  }
+  public receipt(
+    jobId: string,
+    actionType: AutomationActionV2['type'],
+    receipt: ActionReceipt,
+    targetKey?: string,
+  ): void {
+    this.add(
+      DiagnosticEventSchema.parse({
+        id: crypto.randomUUID(),
+        requestId: crypto.randomUUID(),
+        jobId,
+        layer: 'extension',
+        stage: 'read_back',
+        phase: 'info',
+        at: new Date().toISOString(),
+        elapsedMs: 0,
+        actionType,
+        receiptStatus: receipt.status,
+        receiptReason: receipt.reason,
+        ...(/^[a-f0-9]{64}$/.test(targetKey ?? '') ? { targetKey } : {}),
+      }),
+      false,
+    );
   }
   public async step<T>(
     stage: MappingStage,

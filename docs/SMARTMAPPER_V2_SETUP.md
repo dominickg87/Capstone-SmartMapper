@@ -1,6 +1,6 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys backend **0.3.3** and extension **0.3.3**, the human-trained deterministic mapping registry accepted in
+This guide deploys backend **0.3.8** and extension **0.3.9**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -186,6 +186,23 @@ Reconnect once after deploying the M.I.A. branch so the extension receives the n
 
 ## 5. Train a workflow
 
+For the record-first workflow in extension **0.3.9**:
+
+1. Open the carrier tab, connect to M.I.A., choose **Train**, then Home or Auto.
+2. Choose **Record carrier workflow**, or **Continue recording** in an existing draft.
+3. Keep the panel open. Navigate and reveal conditional sections yourself. Pause for a few seconds
+   on each state so the observer sees a stable form. Recording performs no carrier clicks or entry.
+4. Choose **Stop recording & annotate**. A full browser tab opens the saved field reference.
+5. Select a page on the left. Assign M.I.A. fields, transformations or Ignore/blank/human dispositions.
+   Changes autosave. **Open field reference** reopens this editor from an existing training draft.
+6. Open the matching carrier page, then choose **Pause training & test** in the reference. It returns
+   to the carrier panel; select a demo quote and choose **Test prefill on this page**.
+7. Review exceptions, then **Resume training**. Complete, verify and activate the workflow as below.
+
+This is a record of visited states, not every possible branch. Unknown/private captions and choices
+retain numbered fallbacks; existing captures do not retroactively acquire readable labels or new DOM
+identity hints. Address suggestion selection remains manual. See [ADR 0021](adr/0021-recorded-carrier-reference.md).
+
 Training is deliberate and page-by-page:
 
 1. Open the carrier's first quote page and click the SmartMapper toolbar icon on that tab.
@@ -202,8 +219,12 @@ Training is deliberate and page-by-page:
    people or vehicles, choose a fixed position or same-position pattern as appropriate. Configure
    only the provided date, date-part, phone, boolean, enum, multiselect membership/join, split, or
    compose transform.
-8. Save the page. Manually navigate to the next page and choose **Capture next page**. Reveal each
-   material conditional branch and use **Capture scenario**. Numbering continues across the workflow.
+8. Leave **Automatically number new fields** enabled and keep the Train panel open. Reveal each
+   material conditional branch or manually navigate to the next page. Within a few seconds of a
+   stable form, new fields appear with the next available numbers. Existing fields keep their numbers
+   and saved mappings, including when sections are hidden and reopened. Discovery waits for pending
+   edits to save and pauses during prefill tests. **Capture next page** and **Capture scenario** remain
+   available for manual capture if automatic numbering is turned off.
 9. Choose **Mapping complete** only when every captured field has a disposition. This creates an
    immutable `testable` mapping version; it does not make that version available to ordinary jobs.
 
@@ -213,10 +234,15 @@ carrier field. Fixed values are limited to approved operational values such as a
 cannot create a customer or underwriting fact. Their classification and reason are closed enums;
 there is no free-form rationale.
 
-Drafts autosave in `SmartMapperJobs`. Raw carrier labels and choices are used only in the active tab;
-drafts and registry versions persist their semantic strings and option values/labels only as SHA-256
-digests. Quote answers, current control values, HTML, screenshots, cookies, and browser credentials
-are excluded.
+Extension 0.3.5 adds an **Ignore** switch at the upper right of each carrier field card. It works
+without expanding the card and autosaves the same Ignore disposition as the dropdown. Turning it off
+returns the field to **Missing mapping** so a new disposition can be selected. Required and human-only
+fields cannot be ignored with the switch; published mappings remain read-only.
+
+Drafts autosave in `SmartMapperJobs`. Carrier semantics and option identities persist as SHA-256
+digests. New captures may also retain readable form captions and static option labels from a closed
+allowlist for the reference editor. Unknown or private text receives a numbered fallback. Quote
+answers, current control values, HTML, screenshots, cookies, and browser credentials are excluded.
 
 ### Reopen saved work after closing a tab or reloading the extension
 
@@ -238,6 +264,32 @@ The backend uses these training-session capability routes under `/v2/training/se
 `GET /library`, `POST /recover` with a saved draft ID and current revision, and `POST /open` with an
 exact mapping ID/version and current revision. Existing M.I.A. grant endpoints authorize discovery;
 no M.I.A. redeployment or additional cloud resource is needed for this recovery update.
+
+### Test during training (0.3.4)
+
+1. Configure any fields on the current captured page. Choose **Pause training & test**; pending
+   choices are saved before a preview is created. Other fields can remain unmapped.
+2. Search for and select a demo M.I.A. quote for the same line of business, then choose
+   **Test prefill on this page**. Known entries run and are read back; missing mappings/answers
+   appear as exceptions. This preview never uses Next or Add controls.
+3. Review the carrier entries. Choose **Resume training** to save the test summary and return to
+   the same draft, or **Test another demo quote** to end the old job and unlock quote selection.
+4. Correct choices, test again, or manually navigate and let automatic numbering capture new fields. Choose
+   **Mapping complete** only when you are ready for whole-workflow verification and activation.
+5. For an already completed version, choose **Continue training this mapping** in its saved-library
+   row or its opened mapping view. This makes an editable draft and preserves the original version.
+
+Test prefill preserves existing carrier entries on return to training. It does not reset the carrier
+session or clear unrelated fields. Use a fresh carrier quote when changing clients if the page has
+other populated or conditional fields. Preview results are tied to their draft revision; a preview
+is never evidence that a completed production version has passed full coverage.
+
+No M.I.A. web app deployment or additional Azure provisioning is required for this update. Deploy
+SmartMapper backend 0.3.8 and reload extension 0.3.9 before using previews. These builds include the fix for false
+`preview_page_changed` rejections caused by dropdown choices omitted during private training capture.
+Saved drafts and mappings keep their existing IDs, signatures, and choices; retraining is unnecessary
+for this correction. Trained human-only fields still require human action. Actual route, control
+structure, and ordinary dropdown-domain changes retain their existing checks.
 
 ## 6. Test, verify, and activate the mapping
 
@@ -285,8 +337,17 @@ az webapp deploy `
 ```
 
 Open the backend `/health` endpoint and expect `status: "ok"`, protocol `version: "2.0"`, and
-`buildVersion: "0.3.3"`. Health verifies process startup only. Complete the training and mapping
+`buildVersion: "0.3.8"`. Health verifies process startup only. Complete the training and mapping
 checks above to verify M.I.A., identity, both Azure Tables, and browser execution.
+
+Startup HTTP 409 errors now preserve an allowlisted `apiReason` in copied diagnostics and backend
+events, even before a job exists. `mapping_selection_unavailable` means the selected version was not
+found in the authorized account/carrier/quote-type scope; `preview_tab_changed` and
+`preview_owner_changed` identify the preview binding that needs recovery. These errors do not weaken
+scope checks or automatically substitute another version. Use the panel's recovery message, then
+retry. A failure at `/v2/jobs` occurs before field entry, so it cannot establish an autocomplete
+interaction failure. Native address text entry is supported; selecting a dynamic address suggestion
+is not part of the current trained executor and may require manual selection on the carrier page.
 
 Increment the affected app's patch version for every changed delivery. The extension manifest and
 panel read the extension package version; `/health` reports the backend package version. Rebuild and

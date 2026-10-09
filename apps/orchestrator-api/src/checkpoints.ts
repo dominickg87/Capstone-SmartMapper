@@ -93,7 +93,15 @@ export interface CheckpointStore {
   purgeExpired(now: string): Promise<void>;
 }
 
-export class ConflictError extends Error {}
+export class ConflictError extends Error {
+  public constructor(
+    message: string,
+    public readonly clientRevision?: number,
+    public readonly serverRevision?: number,
+  ) {
+    super(message);
+  }
+}
 
 export class MemoryCheckpointStore implements CheckpointStore {
   private readonly values = new Map<string, StoredCheckpoint>();

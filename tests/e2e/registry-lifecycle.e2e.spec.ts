@@ -105,7 +105,13 @@ const source: SourceAnswers = {
 };
 
 function expectNoRawTrainingText(value: unknown): void {
-  const serialized = JSON.stringify(value);
+  const complete = JSON.stringify(value);
+  for (const privateText of ['Jordan', 'Smartmapper', '504-555-1212', 'Casey', 'Synthetic'])
+    expect(complete).not.toContain(privateText);
+  // Approved static reference captions are readable; identity/option values remain hashes.
+  const serialized = JSON.stringify(value, (key, item: unknown) =>
+    key === 'reference' ? undefined : item,
+  );
   for (const privateText of [
     'Jordan',
     'Smartmapper',

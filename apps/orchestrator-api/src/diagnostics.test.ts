@@ -2,6 +2,25 @@ import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { type DiagnosticEvent } from '@smartmapper/contracts';
 import { JobDiagnostics } from './diagnostics.js';
+import { ApiError } from './active-tab-service.js';
+
+it.each([
+  'mapping_not_trained',
+  'mapping_selection_unavailable',
+  'preview_tab_changed',
+  'preview_owner_changed',
+])('logs %s before job creation without identifiers or source values', async (reason) => {
+  const events: DiagnosticEvent[] = [];
+  const log = new JobDiagnostics((event) => events.push(event));
+  await log.request(
+    { requestId: randomUUID(), jobId: null, signal: new AbortController().signal },
+    () => {
+      log.emit('request', 'error', 1, undefined, new ApiError(409, reason));
+      return Promise.resolve();
+    },
+  );
+  expect(events[0]).toMatchObject({ jobId: null, code: 'conflict', apiReason: reason });
+});
 
 it('keeps concurrent stage logs isolated and omits raw errors and source data', async () => {
   const events: DiagnosticEvent[] = [];

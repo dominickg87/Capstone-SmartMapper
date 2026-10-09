@@ -10,6 +10,8 @@ export const SessionSchema = z.object({
       mode: z.literal('testable'),
       mappingId: z.string().uuid(),
       mappingVersion: z.number().int().positive(),
+      preview: z.boolean().optional(),
+      formType: z.enum(['home', 'auto']).optional(),
     })
     .strict()
     .optional(),

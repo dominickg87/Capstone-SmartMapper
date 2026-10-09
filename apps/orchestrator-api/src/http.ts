@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { ZodError, z } from 'zod';
 import { ApiError, type ActiveTabJobService } from './active-tab-service.js';
 import { ConflictError } from './checkpoints.js';
-import { diagnosticCode } from '@smartmapper/contracts';
+import { diagnosticCode, DiagnosticApiReasonSchema } from '@smartmapper/contracts';
 import { untilAborted } from './diagnostics.js';
 import type { TrainingService } from './training-service.js';
 
@@ -90,7 +90,7 @@ export function createApi(
       return;
     }
     const trainingMatch =
-      /^\/v2\/training\/sessions\/([a-f0-9-]{36})(?:\/(pages)(?:\/([a-f0-9-]{36}))?|\/(publish|verify|activate|library|recover|open))?$/.exec(
+      /^\/v2\/training\/sessions\/([a-f0-9-]{36})(?:\/(pages)(?:\/([a-f0-9-]{36}))?|\/(publish|preview|preview-result|verify|activate|library|recover|open|edit))?$/.exec(
         url.pathname,
       );
     if (trainingMatch) {
@@ -103,6 +103,8 @@ export function createApi(
         send(response, 200, await training.library(trainingId, token));
       else if (request.method === 'POST' && operation === 'recover')
         send(response, 200, await training.recover(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && operation === 'edit')
+        send(response, 200, await training.editMapping(trainingId, token, await body(request)));
       else if (request.method === 'POST' && operation === 'open')
         send(response, 200, await training.openMapping(trainingId, token, await body(request)));
       else if (request.method === 'GET' && !section && !operation)
@@ -118,6 +120,10 @@ export function createApi(
           200,
           await training.savePage(trainingId, pageId, token, await body(request)),
         );
+      else if (request.method === 'POST' && operation === 'preview-result')
+        send(response, 200, await training.previewResult(trainingId, token, await body(request)));
+      else if (request.method === 'POST' && operation === 'preview')
+        send(response, 200, await training.preview(trainingId, token, await body(request)));
       else if (request.method === 'POST' && operation === 'publish')
         send(response, 200, await training.publish(trainingId, token, await body(request)));
       else if (request.method === 'POST' && operation === 'verify')
@@ -203,7 +209,7 @@ export function createApi(
           error instanceof ApiError
             ? error.code
             : error instanceof ConflictError
-              ? 'revision_conflict'
+              ? (DiagnosticApiReasonSchema.safeParse(error.message).data ?? 'revision_conflict')
               : error instanceof ZodError
                 ? 'invalid_payload'
                 : 'service_unavailable';

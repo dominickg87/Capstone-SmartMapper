@@ -12,6 +12,32 @@ vi.mock('./session.js', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 describe('mapping startup diagnostics', () => {
+  it.each([
+    ['mapping_selection_unavailable', /create a fresh preview/],
+    ['mapping_not_testable', /no longer available for testing/],
+    ['mapping_carrier_mismatch', /different carrier page/],
+    ['preview_tab_changed', /different browser tab/],
+    ['preview_owner_changed', /different M.I.A. user/],
+    ['mapping_workflow_ambiguous', /exact saved version/],
+  ])('explains %s without displaying arbitrary server text', async (reason, expected) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: reason, message: 'Customer-private server text' }), {
+            status: 409,
+          }),
+        ),
+      ),
+    );
+    const failure = await new ExtensionExecutor(() => undefined)
+      .search('synthetic')
+      .catch((error: unknown) => error);
+    expect(failure).toMatchObject({ apiReason: reason });
+    if (!(failure instanceof Error)) throw new Error('Expected a mapping startup error');
+    expect(failure.message).toMatch(expected);
+    expect(String(failure)).not.toContain('Customer-private');
+  });
   it('explains an unactivated mapping instead of asking to resume a nonexistent job', async () => {
     vi.stubGlobal(
       'fetch',

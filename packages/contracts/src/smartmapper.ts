@@ -48,6 +48,19 @@ export type SourceAnswers = z.infer<typeof SourceAnswersSchema>;
 
 export const PageControlSchema = z
   .object({
+    locatorHints: z
+      .object({
+        name: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+        id: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
+      })
+      .strict()
+      .optional(),
     elementId: id,
     key: id,
     tag: z.enum(['input', 'textarea', 'select', 'button', 'custom']),

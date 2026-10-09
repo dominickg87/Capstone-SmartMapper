@@ -9,7 +9,29 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
-The current extension and backend are **0.3.3**. Saved drafts and completed mappings can be found from
+The current extension is **0.3.9**; the backend is **0.3.8**. Numbered outlines follow their carrier
+controls through document and nested scrolling. During ordinary training, **Automatically number new
+fields** captures revealed fields and subsequent pages after they settle. Existing fields keep their
+numbers and mappings; new fields receive the next numbers. Hiding and reopening a captured section
+reuses its saved state. See [ADR 0022](docs/adr/0022-live-training-discovery.md).
+
+**Record carrier workflow** passively
+captures visited page states. **Stop recording & annotate** opens a full-tab, autosaving field reference.
+Use **Open field reference** for a saved draft or **Continue recording** to collect more states.
+Readable captions use an approved static vocabulary; unfamiliar captions retain numbered fallbacks.
+New captures include hashed DOM identity hints so changing help text does not automatically lose a
+uniquely identified field. Plans now log matched/action/review counts and closed skip reasons.
+See [ADR 0021](docs/adr/0021-recorded-carrier-reference.md) for compatibility and recording limits.
+
+Preview page comparison accounts for
+privacy-omitted choices on trained human-only fields, preserving saved drafts and field safeguards.
+Mapping startup diagnostics distinguish
+unavailable selections, changed preview tabs/users and inactive workflows. Each training field card has an
+autosaving **Ignore** switch for optional fields. Use **Pause training & test** to try the current
+page with a demo quote, then **Resume training** to keep editing the same draft. **Continue training
+this mapping** creates an editable copy of a completed version. See [ADR 0020](docs/adr/0020-training-page-previews.md).
+
+Saved drafts and completed mappings can be found from
 a reopened carrier tab using fresh M.I.A. training authorization. Original capabilities and jobs stay
 bound to their original tab; recovery preserves numbered choices in a new training session. Saved
 overlays resolve current DOM targets instead of reusing stale identifiers. See
@@ -41,9 +63,9 @@ In **Train**, a principal on the separate training allowlist:
 The M.I.A. selector shows the original question, section, entity, and stable source path. The Home
 catalog includes both supported applicants. The Auto catalog includes every supported source field
 for up to five additional drivers and eight vehicles, with wildcard templates for same-position
-rules. Carrier-derived labels, sections, context, group text, and option values/labels persist only
-as SHA-256 digests; their raw text is ephemeral in the active carrier tab. Training never stores
-quote answers, HTML, or screenshots.
+rules. Matching uses SHA-256 digests of carrier semantics and optional DOM identity hints. A closed
+vocabulary of static form captions and choices provides readable reference labels; unrecognized or
+potentially personal text stays hashed. Training never stores quote answers, HTML, or screenshots.
 
 In **Map**, SmartMapper retrieves the selected quote's semantic question-and-answer manifest,
 resolves the active mapping for the tenant, carrier origin, and line of business, and compiles

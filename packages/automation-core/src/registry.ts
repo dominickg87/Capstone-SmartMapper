@@ -83,6 +83,55 @@ async function sha256(value: string): Promise<string> {
 
 export const semanticHashPrefix = 'sha256:';
 
+/** Form captions only. Never call this with page text, HTML, current answers or URLs. */
+export function carrierReferenceCaption(
+  value: string,
+  enteredValues: readonly string[] = [],
+): string {
+  let caption = text(value);
+  if (/\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(caption)) return '';
+  for (const entered of enteredValues
+    .filter((item) => item.trim().length >= 3)
+    .sort((a, b) => b.length - a.length)) {
+    caption = caption.replace(
+      new RegExp(entered.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'),
+      '[redacted]',
+    );
+  }
+  // Omit suspicious captions entirely; a generic field number is preferable to stored PII.
+  if (
+    caption.length > 240 ||
+    /[<>@]|https?:|www\.|\b(?:bearer|token|sessionid)\b|\b\d{3}[- .]?\d{2}[- .]?\d{4}\b|\b\d{6,}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{1,6}\s+.+\b(?:street|st|road|rd|avenue|ave|drive|dr|lane|ln|blvd|court|ct|way|pkwy)\b|\b[A-Z0-9_-]{16,}\b/i.test(
+      caption,
+    )
+  )
+    return '';
+  const plain = caption
+    .replace(/\[redacted\]/g, '')
+    .replace(/[?:*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const prefixes =
+    '(?:(?:primary|secondary|first|second|third|fourth|fifth|additional|principal|current|prior|mailing|property|risk|insured|named|co|contact|applicant|driver|vehicle|optional|reference)\\s+)*';
+  const field =
+    '(?:first name|last name|middle name|middle initial|given name|surname|name|date of birth|birth date|dob|gender|sex|suffix|salutation|email|e-mail|customer email|phone|phone number|phone type|address(?: line)?(?: [12])?|city|state|zip(?: code)?|postal code|country|county|parish|note|residence type|marital status|occupation|license number|license state|vin|year|make|model|mileage|construction type|foundation type|square footage|number of stories|exterior siding|roofing material|roof shape|roof age|roof replacement year|payment plan|payor|household size|effective date|agency code|agent code|producer code|number of water heaters|water heater(?: [12])? update year)';
+  const group =
+    /^(?:applicant|applicants|named insured|principal named insured(?: \(all products\))?|drivers?|vehicles?|policy|property|coverages?|deductibles|contact information|current mailing address|property address|basic coverages|quick quote|loss history|prior insurance|additional applicant|additional details|details|selection|state|insured|yes|no|currently insured|current insurance|yes currently insured|no current insurance|choose an option|add (?:another )?(?:driver|vehicle|applicant)|next|continue|products)$/i;
+  return group.test(plain) || new RegExp(`^${prefixes}${field}$`, 'i').test(plain) ? caption : '';
+}
+
+// Persist readable choices only from a static vocabulary. Unknown dropdown text can be names,
+// vehicles or account records even when its parent label looks innocuous.
+const publicOptionCaptions = new Set(
+  'yes|no|none|unknown|other|not applicable|select|select one|please select|choose|male|female|married|single|divorced|widowed|cell|mobile|home|work|primary|secondary|primary residence|secondary residence|rental|owner|tenant|wood|brick|frame|masonry|metal|tile|shingle|asphalt|asphalt shingle|composition|concrete|slab|crawl space|basement|one|two|three|alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia'.split(
+    '|',
+  ),
+);
+export function carrierReferenceOption(value: string): string {
+  const caption = text(value);
+  return publicOptionCaptions.has(caption.toLowerCase()) ? caption : '';
+}
+
 /**
  * Produces the value-free identity used for carrier semantics. Training observations may send the
  * prefixed digest instead of the original carrier text; live observations are normalized and
@@ -219,6 +268,39 @@ export async function stablePageSignature(page: {
   return sha256(JSON.stringify({ controls }));
 }
 
+/** Compare an existing capture without treating privacy-omitted choices as a layout change. */
+export async function capturedPageSignatureMatches(
+  page: { controls: Array<PageControl | TrainingControlSnapshot> },
+  expectedSignature: string,
+  trainedTargets: ReadonlyArray<
+    Pick<StableTargetLocator, 'signature' | 'occurrence' | 'humanOnly' | 'options'>
+  >,
+): Promise<boolean> {
+  if ((await stablePageSignature(page)) === expectedSignature) return true;
+  // Only choices that were omitted on a trained human-only control may be normalized. Source
+  // dropdown domains, control count/order/type and required state still participate in the check.
+  const privateChoices = new Map<string, Set<number>>();
+  for (const target of trainedTargets) {
+    if (!target.humanOnly || target.options.length) continue;
+    const occurrences = privateChoices.get(target.signature) ?? new Set<number>();
+    occurrences.add(target.occurrence);
+    privateChoices.set(target.signature, occurrences);
+  }
+  if (!privateChoices.size) return false;
+  const signatures = await Promise.all(page.controls.map(stableTargetSignature));
+  const occurrences = new Map<string, number>();
+  let normalized = false;
+  const controls = page.controls.map((control, index) => {
+    const signature = signatures[index]!;
+    const occurrence = occurrences.get(signature) ?? 0;
+    occurrences.set(signature, occurrence + 1);
+    if (!control.options.length || !privateChoices.get(signature)?.has(occurrence)) return control;
+    normalized = true;
+    return { ...control, options: [] };
+  });
+  return normalized && (await stablePageSignature({ controls })) === expectedSignature;
+}
+
 export async function stableLocator(
   control: PageControl | TrainingControlSnapshot,
   occurrence: number,
@@ -230,6 +312,8 @@ export async function stableLocator(
     value ? `${semanticHashPrefix}${await semanticTextDigest(value)}` : '';
   return {
     signature: await stableTargetSignature(control),
+    ...(control.locatorHints ? { locatorHints: control.locatorHints } : {}),
+    ...('reference' in control && control.reference ? { reference: control.reference } : {}),
     occurrence,
     repeatIndex,
     repeatEntityType,
@@ -264,13 +348,42 @@ export async function stableLocator(
 
 async function controlsBySignature(page: PageObservation): Promise<Map<string, PageControl[]>> {
   const result = new Map<string, PageControl[]>();
-  for (const control of page.controls) {
+  for (const control of [...page.controls].sort(
+    (a, b) => a.rect.y - b.rect.y || a.rect.x - b.rect.x,
+  )) {
     const signature = await stableTargetSignature(control);
     const group = result.get(signature) ?? [];
     group.push(control);
     result.set(signature, group);
   }
   return result;
+}
+
+/** Exact semantics first; unique DOM identity may bridge changing help/validation text only. */
+export async function resolveTrainedControl(
+  target: StableTargetLocator,
+  page: PageObservation,
+  indexed?: Map<string, PageControl[]>,
+): Promise<PageControl | undefined> {
+  const current = indexed ?? (await controlsBySignature(page));
+  const exact = current.get(target.signature)?.[target.occurrence];
+  if (!target.locatorHints || isRadio(target)) return exact;
+  for (const hint of ['name', 'id'] as const) {
+    const value = target.locatorHints[hint];
+    if (!value) continue;
+    const matches = page.controls.filter((control) => control.locatorHints?.[hint] === value);
+    if (matches.length !== 1) continue;
+    const candidate = matches[0]!;
+    if (
+      candidate.tag === target.tag &&
+      candidate.inputType === target.inputType &&
+      candidate.role === target.role &&
+      (await semanticTextDigest(candidate.label)) === (await semanticTextDigest(target.label)) &&
+      (await semanticTextDigest(candidate.section)) === (await semanticTextDigest(target.section))
+    )
+      return candidate;
+  }
+  return undefined;
 }
 
 async function optionsEqual(
@@ -554,22 +667,36 @@ async function selectMappingPage(
   observation: PageObservation,
   current: Map<string, PageControl[]>,
 ): Promise<MappingPage | null> {
-  const signature = await stablePageSignature(observation);
   const route = profile.pages.filter((page) => page.routeId === observation.routeId);
   if (!route.length) return null;
-  const score = (page: MappingPage): number =>
-    [
-      ...page.fields.map((field) => field.target),
-      ...page.workflowControls.map((item) => item.target),
-    ].filter((target) => current.has(target.signature)).length;
-  const exact = route.filter((page) => page.signature === signature);
-  if (exact.length === 1 && score(exact[0]!) > 0) return exact[0]!;
-  const scored = route
-    .map((page) => ({
-      page,
-      score: score(page),
-    }))
-    .sort((left, right) => right.score - left.score);
+  const score = async (page: MappingPage): Promise<number> =>
+    (
+      await Promise.all(
+        [
+          ...page.fields.map((field) => field.target),
+          ...page.workflowControls.map((item) => item.target),
+        ].map(async (target) => !!(await resolveTrainedControl(target, observation, current))),
+      )
+    ).filter(Boolean).length;
+  const exact: MappingPage[] = [];
+  for (const page of route)
+    if (
+      await capturedPageSignatureMatches(
+        observation,
+        page.signature,
+        page.fields.map((field) => field.target),
+      )
+    )
+      exact.push(page);
+  if (exact.length === 1 && (await score(exact[0]!)) > 0) return exact[0]!;
+  const scored = (
+    await Promise.all(
+      route.map(async (page) => ({
+        page,
+        score: await score(page),
+      })),
+    )
+  ).sort((left, right) => right.score - left.score);
   if (!scored[0]?.score || scored[0].score === scored[1]?.score) return null;
   return scored[0].page;
 }
@@ -601,7 +728,9 @@ export async function compileRegistryPage(
       disposition.kind === 'source' ? resolveReferences(disposition, field.target, source) : null;
     const matches = current.get(field.target.signature) ?? [];
     const radioGroup = isRadio(field.target) ? matches : [];
-    const control = isRadio(field.target) ? radioGroup[0] : matches[field.target.occurrence];
+    const control = isRadio(field.target)
+      ? radioGroup[0]
+      : await resolveTrainedControl(field.target, observation, current);
     if (!control) {
       if (field.target.repeatIndex !== null && ['ignore', 'leave_blank'].includes(disposition.kind))
         continue;

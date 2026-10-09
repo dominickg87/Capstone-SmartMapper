@@ -268,7 +268,11 @@ export class BrowserPageSession {
       .filter(
         (element) => !(element instanceof HTMLAnchorElement) || ordinaryNextLabel(label(element)),
       )
-      .filter((element) => !this.overlay?.contains(element));
+      .filter(
+        (element) =>
+          !this.overlay?.contains(element) &&
+          !element.closest('#smartmapper-training-overlay,[data-smartmapper-overlay]'),
+      );
     this.elements.clear();
     this.omittedControls =
       Math.max(0, candidates.length - 400) +
@@ -413,6 +417,17 @@ export class BrowserPageSession {
       controls.map(async (control) => {
         const element = candidateElements.get(control.elementId);
         control.key = await valueDigest(semanticLocatorSeed(control, element));
+        const hints: { name?: string; id?: string } = {};
+        for (const attribute of ['name', 'id'] as const) {
+          const value = element?.getAttribute(attribute)?.trim();
+          if (
+            value &&
+            value.length <= 200 &&
+            !/[a-f0-9]{8}-[a-f0-9-]{27,}|^:r|\b\d{10,}\b/i.test(value)
+          )
+            hints[attribute] = await valueDigest(value);
+        }
+        if (Object.keys(hints).length) control.locatorHints = hints;
       }),
     );
     this.bindStableElementIds(controls, candidateElements);
@@ -489,6 +504,12 @@ export class BrowserPageSession {
       this.overlay = overlay;
     }
     return page;
+  }
+
+  /** Resolve a previously observed control for value-free training overlay geometry. */
+  public trainingElement(elementId: string): HTMLElement | undefined {
+    const element = this.elements.get(elementId);
+    return element?.isConnected ? element : undefined;
   }
 
   private resolveControl(

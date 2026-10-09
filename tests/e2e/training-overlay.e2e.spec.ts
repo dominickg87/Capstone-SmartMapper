@@ -217,6 +217,64 @@ test('training observes one logical radio group, shows a numbered marker, and ne
     await expect(overlay.locator('button')).toHaveCount(1);
     await expect(overlay.getByRole('button', { name: /field 123/i })).toHaveText('123');
 
+    // A carrier can scroll a panel independently of the document. Badges must use the live
+    // target geometry, disappear outside that panel's clip, and follow subsequent layout shifts.
+    await carrier.addStyleTag({ content: 'button { display: inline-block; }' });
+    await carrier
+      .locator('input[type="radio"]')
+      .first()
+      .evaluate((target) => {
+        const box = document.createElement('div');
+        box.id = 'synthetic-scroll-box';
+        box.style.cssText = 'height:240px;width:400px;overflow:auto;margin:60px 0;border:2px solid';
+        const inner = document.createElement('div');
+        inner.style.cssText =
+          'height:1200px;width:900px;padding:320px 100px 0;box-sizing:border-box';
+        const label = document.createElement('label');
+        label.id = 'moving-target';
+        label.style.display = 'block';
+        label.append(target);
+        inner.append(label);
+        box.append(inner);
+        document.body.append(box);
+        document.body.style.minHeight = '2600px';
+        box.scrollIntoView({ block: 'center' });
+      });
+    const alignment = () =>
+      carrier.evaluate(() => {
+        const target = document.querySelector('#moving-target input')!.getBoundingClientRect();
+        const outline = document.querySelector<HTMLElement>('#smartmapper-training-overlay > div')!;
+        const bounds = outline.getBoundingClientRect();
+        return (
+          !outline.hidden &&
+          Math.abs(bounds.left - target.left + 4) < 1 &&
+          Math.abs(bounds.top - target.top + 4) < 1
+        );
+      });
+    await expect(overlay.locator('button')).toBeHidden();
+    await carrier.locator('#synthetic-scroll-box').evaluate((box) => {
+      box.scrollTop = 200;
+      box.scrollLeft = 40;
+    });
+    await expect.poll(alignment).toBe(true);
+    await carrier.evaluate(() => window.scrollBy(0, 35));
+    await expect.poll(alignment).toBe(true);
+    await carrier.locator('#moving-target').evaluate((label) => {
+      (label as HTMLElement).style.marginTop = '25px';
+    });
+    await expect.poll(alignment).toBe(true);
+    await carrier.locator('#synthetic-scroll-box').evaluate((box) => {
+      box.scrollTop = 900;
+    });
+    await expect(overlay.locator('button')).toBeHidden();
+    await worker.evaluate(async (id) => {
+      await chrome.tabs.sendMessage(id, {
+        type: 'focus-training-field',
+        fieldId: 'synthetic-radio-group',
+      });
+    }, tabId);
+    await expect.poll(alignment).toBe(true);
+
     await carrier.goto(carrierOrigin + '/classic?step=3');
     await expect(carrier.getByRole('heading', { name: 'Review worksheet' })).toBeVisible();
     const reviewTabId = await tabIdFor(worker, '/classic');

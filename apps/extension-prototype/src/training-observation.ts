@@ -10,6 +10,8 @@ import {
   recognizedOperationalTarget,
   semanticHashPrefix,
   semanticTextDigest,
+  carrierReferenceCaption,
+  carrierReferenceOption,
 } from '@smartmapper/automation-core/registry';
 
 const redacted = '[redacted]';
@@ -154,6 +156,15 @@ async function structuralControl(
     : null;
   return {
     elementId: control.elementId,
+    ...(control.locatorHints ? { locatorHints: control.locatorHints } : {}),
+    reference: {
+      label: carrierReferenceCaption(control.label, enteredValues),
+      section: carrierReferenceCaption(control.section, enteredValues),
+      options:
+        omitChoices || !carrierReferenceCaption(control.label, enteredValues)
+          ? []
+          : control.options.map((option) => carrierReferenceOption(option.label)),
+    },
     key: control.key,
     tag: control.tag,
     inputType: canonicalControlInputType(control.inputType),

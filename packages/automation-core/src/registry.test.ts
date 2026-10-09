@@ -13,7 +13,11 @@ import {
   semanticTextDigest,
   stableLocator,
   stablePageSignature,
+  capturedPageSignatureMatches,
   stableTargetSignature,
+  resolveTrainedControl,
+  carrierReferenceCaption,
+  carrierReferenceOption,
 } from './registry.js';
 
 const now = new Date().toISOString();
@@ -180,6 +184,171 @@ async function profile(
 }
 
 describe('deterministic mapping registry compiler', () => {
+  it('recovers changed help text through a unique identity, preserving control semantics', async () => {
+    const captured = control({
+      label: 'First name',
+      section: 'Applicant',
+      context: ['Required'],
+      locatorHints: { name: 'a'.repeat(64) },
+    });
+    const target = await stableLocator(captured, 0, null, null);
+    const live = { ...captured, elementId: 'replacement', context: ['Enter a first name'] };
+    const livePage = page([live]);
+    expect((await resolveTrainedControl(target, livePage))?.elementId).toBe('replacement');
+    for (const changed of [
+      { label: 'Last name' },
+      { section: 'Second applicant' },
+      { inputType: 'password' },
+      { role: 'button' },
+    ]) {
+      expect(await resolveTrainedControl(target, page([{ ...live, ...changed }]))).toBeUndefined();
+    }
+    expect(
+      await resolveTrainedControl(target, page([live, { ...live, elementId: 'duplicate' }])),
+    ).toBeUndefined();
+  });
+
+  it('keeps duplicate labels attached to their unique names after their layout order changes', async () => {
+    const first = control({
+      label: 'Name',
+      locatorHints: { name: 'a'.repeat(64) },
+      rect: { x: 0, y: 0, width: 100, height: 20 },
+    });
+    const second = control({
+      ...first,
+      elementId: 'second',
+      locatorHints: { name: 'b'.repeat(64) },
+      rect: { x: 0, y: 30, width: 100, height: 20 },
+    });
+    const target = await stableLocator(first, 0, null, null);
+    const reversed = page([
+      { ...second, rect: first.rect },
+      { ...first, rect: second.rect },
+    ]);
+    expect((await resolveTrainedControl(target, reversed))?.elementId).toBe(first.elementId);
+  });
+
+  it('retains static captions while excluding personal data and unrecognized record choices', () => {
+    expect(carrierReferenceCaption('Applicant Jordan Secret', ['Jordan Secret'])).toBe(
+      'Applicant [redacted]',
+    );
+    for (const value of [
+      'a@example.test',
+      '<script>run()</script>',
+      '504-555-1212',
+      '123-45-6789',
+      '123 Main Street',
+      '10/08/1980',
+      'Bearer secret',
+    ])
+      expect(carrierReferenceCaption(value)).toBe('');
+    expect(carrierReferenceOption('Casey Example')).toBe('');
+    expect(carrierReferenceOption('2021 Toyota Camry')).toBe('');
+    expect(carrierReferenceOption('Louisiana')).toBe('Louisiana');
+    expect(carrierReferenceCaption('Mailing address line 1')).toBe('Mailing address line 1');
+  });
+  it('matches legacy private-choice captures without changing live options or stored signatures', async () => {
+    const captured = control({
+      tag: 'select',
+      inputType: 'select-one',
+      role: 'combobox',
+      label: 'Named insured',
+      humanOnly: true,
+      options: [],
+    });
+    const target = await stableLocator(captured, 0, null, null);
+    const signature = await stablePageSignature(page([captured]));
+    const live = {
+      ...captured,
+      humanOnly: false,
+      options: [{ value: 'CUSTOMER-000012345678', label: 'Jordan Sample' }],
+    };
+    expect(await stablePageSignature(page([live]))).not.toBe(signature);
+    await expect(capturedPageSignatureMatches(page([live]), signature, [target])).resolves.toBe(
+      true,
+    );
+    expect(live.options).toHaveLength(1);
+    expect(target.options).toEqual([]);
+    const compiled = await compileRegistryPage(
+      await profile(page([captured]), [
+        {
+          fieldId: crypto.randomUUID(),
+          sequence: 1,
+          target,
+          disposition: { kind: 'human_required' },
+        },
+      ]),
+      page([live]),
+      source([]),
+    );
+    expect(compiled.mappingPage?.signature).toBe(signature);
+    expect(compiled.actions).toEqual([]);
+  });
+
+  it.each(['required', 'type', 'added', 'renamed', 'ordinary-options'] as const)(
+    'still rejects %s changes beside a privacy-omitted choice list',
+    async (change) => {
+      const privateChoice = control({
+        tag: 'select',
+        inputType: 'select-one',
+        role: 'combobox',
+        label: 'Named insured',
+        humanOnly: true,
+      });
+      const ordinaryChoice = control({
+        tag: 'select',
+        inputType: 'select-one',
+        role: 'combobox',
+        label: 'State',
+        options: [{ value: 'LA', label: 'Louisiana' }],
+      });
+      const signature = await stablePageSignature(page([privateChoice, ordinaryChoice]));
+      const live = page([
+        { ...privateChoice, options: [{ value: 'synthetic-person', label: 'Jordan Sample' }] },
+        { ...ordinaryChoice },
+      ]);
+      if (change === 'required') live.controls[0]!.required = true;
+      if (change === 'type') live.controls[0]!.tag = 'custom';
+      if (change === 'added') live.controls.push(control({ label: 'New field' }));
+      if (change === 'renamed') live.controls[0]!.label = 'Different person selector';
+      if (change === 'ordinary-options') live.controls[1]!.options = [];
+      await expect(
+        capturedPageSignatureMatches(live, signature, [
+          await stableLocator(privateChoice, 0, null, null),
+          await stableLocator(ordinaryChoice, 0, null, null),
+        ]),
+      ).resolves.toBe(false);
+    },
+  );
+
+  it('does not ignore an untrained or ordinary empty dropdown domain', async () => {
+    const captured = control({ tag: 'select', inputType: 'select-one', role: 'combobox' });
+    const live = page([{ ...captured, options: [{ value: 'new', label: 'New choice' }] }]);
+    const signature = await stablePageSignature(page([captured]));
+    await expect(capturedPageSignatureMatches(live, signature, [])).resolves.toBe(false);
+    await expect(
+      capturedPageSignatureMatches(live, signature, [await stableLocator(captured, 0, null, null)]),
+    ).resolves.toBe(false);
+  });
+
+  it('normalizes only the trained occurrence when identically labeled controls repeat', async () => {
+    const captured = control({ tag: 'select', inputType: 'select-one', role: 'combobox' });
+    const other = {
+      ...captured,
+      elementId: 'other',
+      options: [{ value: 'LA', label: 'Louisiana' }],
+    };
+    const target = await stableLocator({ ...captured, humanOnly: true }, 0, null, null);
+    const signature = await stablePageSignature(page([captured, other]));
+    const live = { ...captured, options: [{ value: 'person', label: 'Jordan Sample' }] };
+    await expect(
+      capturedPageSignatureMatches(page([live, other]), signature, [target]),
+    ).resolves.toBe(true);
+    await expect(
+      capturedPageSignatureMatches(page([live, { ...other, options: [] }]), signature, [target]),
+    ).resolves.toBe(false);
+  });
+
   it('uses semantic target identity instead of ephemeral element IDs, keys or values', async () => {
     const first = control({ elementId: 'e1', key: 'key-one', value: 'customer one' });
     const second = control({ elementId: 'e99', key: 'key-two', value: 'customer two' });

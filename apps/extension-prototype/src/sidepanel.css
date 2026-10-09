@@ -4,6 +4,31 @@
   background: #f4f7fb;
   font-size: 14px;
 }
+.record-workflow {
+  width: 100%;
+  margin-top: 12px;
+  background: #117365;
+  border-color: #117365;
+}
+.recording-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #dfe7ef;
+}
+.recording-status {
+  font-weight: 700;
+}
+.recording-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: #d84949;
+  box-shadow: 0 0 0 5px #d849491a;
+}
 * {
   box-sizing: border-box;
 }
@@ -306,6 +331,58 @@ textarea {
   border-color: #347bbd;
   box-shadow: 0 0 0 2px rgb(52 123 189 / 18%);
 }
+.field-card-header {
+  display: flex;
+  align-items: flex-start;
+  background: #f8fafc;
+}
+.field-card-header .field-heading {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+.field-ignore-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px;
+  margin: 6px 6px 0 0;
+  border: 0;
+  color: #52637b;
+  background: transparent;
+  font-size: 11px;
+}
+.field-ignore-toggle:focus-visible {
+  outline: 2px solid #347bbd;
+  outline-offset: 1px;
+}
+.field-ignore-track {
+  display: block;
+  width: 40px;
+  height: 22px;
+  padding: 3px;
+  border-radius: 12px;
+  background: #61758c;
+}
+.field-ignore-track::after {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: white;
+  content: '';
+}
+.field-ignore-toggle[aria-checked='true'] {
+  color: #067647;
+}
+.field-ignore-toggle[aria-checked='true'] .field-ignore-track {
+  background: #067647;
+}
+.field-ignore-toggle[aria-checked='true'] .field-ignore-track::after {
+  transform: translateX(18px);
+}
 .field-heading {
   display: flex;
   align-items: center;
@@ -411,4 +488,18 @@ textarea {
 }
 .review-list {
   padding-left: 20px;
+}
+.mapping-editor {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.auto-discovery-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.auto-discovery-toggle input {
+  width: auto;
 }

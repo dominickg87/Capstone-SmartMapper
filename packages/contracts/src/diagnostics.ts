@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { FieldReviewSchema } from './smartmapper.js';
 
 export const MappingStageSchema = z.enum([
   'authorize',
@@ -36,11 +37,30 @@ export const DiagnosticCountsSchema = z
     controls: z.number().int().nonnegative().optional(),
     actions: z.number().int().nonnegative().optional(),
     verified: z.number().int().nonnegative().optional(),
+    reviews: z.number().int().nonnegative().optional(),
+    trainedFields: z.number().int().nonnegative().optional(),
+    matchedFields: z.number().int().nonnegative().optional(),
     batchIndex: z.number().int().nonnegative().optional(),
     batchSize: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type DiagnosticCounts = z.infer<typeof DiagnosticCountsSchema>;
+export const DiagnosticApiReasonSchema = z.enum([
+  'revision_conflict',
+  'receipt_conflict',
+  'training_conflict',
+  'conflict',
+  'preview_page_changed',
+  'invalid_preview_result',
+  'mapping_not_trained',
+  'mapping_workflow_ambiguous',
+  'mapping_selection_unavailable',
+  'mapping_not_testable',
+  'mapping_carrier_mismatch',
+  'preview_tab_changed',
+  'preview_owner_changed',
+  'mapping_unavailable',
+]);
 export const DiagnosticEventSchema = z
   .object({
     id: z.string().uuid(),
@@ -52,7 +72,18 @@ export const DiagnosticEventSchema = z
     at: z.iso.datetime(),
     elapsedMs: z.number().int().nonnegative(),
     code: DiagnosticCodeSchema.optional(),
+    apiReason: DiagnosticApiReasonSchema.optional(),
+    clientRevision: z.number().int().nonnegative().optional(),
+    serverRevision: z.number().int().nonnegative().optional(),
     counts: DiagnosticCountsSchema.optional(),
+    reviewReasons: z
+      .array(
+        z
+          .object({ reason: FieldReviewSchema.shape.reason, count: z.number().int().positive() })
+          .strict(),
+      )
+      .max(30)
+      .optional(),
     targetKey: z
       .string()
       .regex(/^[a-f0-9]{64}$/)

@@ -208,8 +208,12 @@ describe('structural training observation', () => {
       expect(option.value).toMatch(/^sha256:[a-f0-9]{64}$/);
       expect(option.label).toMatch(/^sha256:[a-f0-9]{64}$/);
     }
-    expect(JSON.stringify(safe)).not.toContain('Louisiana');
-    expect(JSON.stringify(safe)).not.toContain('Texas');
+    expect(safe.controls[0]?.reference).toEqual({
+      label: 'State',
+      section: 'Policy',
+      options: ['Louisiana', 'Texas'],
+    });
+    expect(safe.controls[0]).not.toHaveProperty('value');
   });
 
   it('keeps ordinary static residence and insurance choices trainable', async () => {
@@ -250,11 +254,12 @@ describe('structural training observation', () => {
     expect(safe.controls[1]?.choiceValue).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(safe.controls[2]?.humanOnly).toBe(false);
     expect(safe.controls[2]?.choiceValue).toMatch(/^sha256:[a-f0-9]{64}$/);
-    const serialized = JSON.stringify(safe);
-    expect(serialized).not.toContain('Primary residence');
-    expect(serialized).not.toContain('Secondary residence');
-    expect(serialized).not.toContain('currently insured');
-    expect(serialized).not.toContain('current insurance');
+    expect(safe.controls[0]?.reference?.options).toEqual([
+      'Primary residence',
+      'Secondary residence',
+    ]);
+    expect(safe.controls[1]?.reference?.label).toBe('Yes currently insured');
+    expect(safe.controls.every((control) => control.label.startsWith('sha256:'))).toBe(true);
   });
 
   it('hashes unrecognized label, section and context text even when no input contains it', async () => {
@@ -308,7 +313,7 @@ describe('structural training observation', () => {
     expect(ambiguous.controls[0]?.options[0]?.label).toMatch(/^sha256:[a-f0-9]{64}$/);
   });
 
-  it('retains only enum-and-index hints for repeated rows and add controls', async () => {
+  it('retains enum-and-index hints and approved static captions for repeated rows and add controls', async () => {
     const hinted = await structuralTrainingObservation({
       ...observation,
       controls: [
@@ -336,7 +341,8 @@ describe('structural training observation', () => {
       index: 1,
     });
     expect(hinted.controls[1]?.addEntityType).toBe('vehicle');
-    expect(JSON.stringify(hinted)).not.toContain('Second driver');
-    expect(JSON.stringify(hinted)).not.toContain('Add another vehicle');
+    expect(hinted.controls[0]?.reference?.label).toBe('Second driver given name');
+    expect(hinted.controls[1]?.reference?.label).toBe('Add another vehicle');
+    expect(hinted.controls.every((control) => control.label.startsWith('sha256:'))).toBe(true);
   });
 });

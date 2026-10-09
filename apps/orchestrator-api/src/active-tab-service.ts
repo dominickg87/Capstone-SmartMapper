@@ -8,7 +8,11 @@ import {
   validatePageBinding,
   valueDigest,
 } from '@smartmapper/automation-core/active-tab';
-import { compileRegistryPage, stableTargetSignature } from '@smartmapper/automation-core/registry';
+import {
+  compileRegistryPage,
+  stableTargetSignature,
+  capturedPageSignatureMatches,
+} from '@smartmapper/automation-core/registry';
 import {
   JobViewSchema,
   MappingLineOfBusinessSchema,
@@ -201,13 +205,17 @@ export class ActiveTabJobService {
         if (best.length !== 1) throw new ApiError(409, 'mapping_workflow_ambiguous');
         mapping = best[0]!;
       }
-      if (
-        request.mappingSelection &&
-        (!mapping ||
-          !['testable', 'verified', 'active'].includes(mapping.status) ||
-          !pathMatchesBase(carrierPage, mapping.workflow.carrierBaseUrl))
-      )
-        throw new ApiError(409, 'mapping_not_trained');
+      if (request.mappingSelection) {
+        if (!mapping) throw new ApiError(409, 'mapping_selection_unavailable');
+        if (!['preview', 'testable', 'verified', 'active'].includes(mapping.status))
+          throw new ApiError(409, 'mapping_not_testable');
+        if (!pathMatchesBase(carrierPage, mapping.workflow.carrierBaseUrl))
+          throw new ApiError(409, 'mapping_carrier_mismatch');
+        if (mapping.preview && mapping.createdByUserId !== binding.userId)
+          throw new ApiError(409, 'preview_owner_changed');
+        if (mapping.preview && mapping.preview.tabId !== binding.tabId)
+          throw new ApiError(409, 'preview_tab_changed');
+      }
     } catch (error) {
       await this.sources.revoke(request.miaOrigin, grant.sourceToken).catch(() => undefined);
       throw error;
@@ -265,6 +273,12 @@ export class ActiveTabJobService {
 
   public async pause(jobId: string, token: string): Promise<JobView> {
     const record = await this.authorized(jobId, token);
+    if (
+      record.value.view.status === 'paused' &&
+      !record.value.pending &&
+      !record.value.queued?.length
+    )
+      return JobViewSchema.parse(record.value.view);
     record.value.view.status = 'paused';
     record.value.pending = null;
     record.value.queued = [];
@@ -309,7 +323,8 @@ export class ActiveTabJobService {
     const request = ObserveRequestSchema.parse(input);
     const record = await this.authorized(jobId, token);
     const value = record.value;
-    if (request.revision !== value.view.revision) throw new ConflictError('revision_conflict');
+    if (request.revision !== value.view.revision)
+      throw new ConflictError('revision_conflict', request.revision, value.view.revision);
     const bindingProblem = validatePageBinding(request.observation, value.view.binding);
     if (bindingProblem) throw new ApiError(409, bindingProblem);
     const pageChanged =
@@ -425,6 +440,17 @@ export class ActiveTabJobService {
         : (await this.registry.list(scope)).filter((profile) => profile.status === 'active');
       if (!candidates.length || candidates.some((profile) => profile.status === 'archived'))
         throw new ApiError(409, 'mapping_unavailable');
+      const preview = candidates.find((profile) => profile.preview);
+      if (
+        preview &&
+        (preview.pages[0]?.routeId !== request.observation.routeId ||
+          !(await capturedPageSignatureMatches(
+            request.observation,
+            preview.pages[0].signature,
+            preview.pages[0].fields.map((field) => field.target),
+          )))
+      )
+        throw new ApiError(409, 'preview_page_changed');
       const proposals = await this.diagnostics.stage('plan', () =>
         Promise.all(
           candidates.map(async (profile) => ({
@@ -568,6 +594,23 @@ export class ActiveTabJobService {
         });
       }
       planning.value.view.reviews = planning.value.view.reviews.slice(0, 100);
+      const reasons = new Map<FieldReview['reason'], number>();
+      for (const review of planning.value.view.reviews)
+        reasons.set(review.reason, (reasons.get(review.reason) ?? 0) + 1);
+      this.diagnostics.emit(
+        'plan',
+        'info',
+        0,
+        {
+          controls: request.observation.controls.length,
+          trainedFields: compiled.mappingPage?.fields.length ?? 0,
+          matchedFields: compiled.recognizedControlIds.length,
+          actions: batches.length,
+          reviews: planning.value.view.reviews.length,
+        },
+        undefined,
+        { reviewReasons: [...reasons].map(([reason, count]) => ({ reason, count })) },
+      );
       if (!batches.length) {
         const expandable = compiled.missingTargets.find((missing) => {
           const limit = mapping.entityLimits.find((candidate) =>
@@ -578,7 +621,7 @@ export class ActiveTabJobService {
           );
           return !!limit && missing.repeatIndex < limit.maximumCount;
         });
-        if (expandable && compiled.mappingPage) {
+        if (expandable && compiled.mappingPage && !mapping.preview) {
           const limit = mapping.entityLimits.find((candidate) =>
             expandable.sourcePathPatterns.some((pattern) => {
               const family = candidate.sourcePattern.split('*')[0] ?? '';
@@ -683,6 +726,7 @@ export class ActiveTabJobService {
         if (
           clean &&
           this.access.autoNext &&
+          !mapping.preview &&
           mappedNext?.length === 1 &&
           (value.completedPages ?? 0) < 20
         ) {
@@ -772,9 +816,15 @@ export class ActiveTabJobService {
       value.pending?.batchId !== request.batchId ||
       value.pending.actionId !== request.receipt.actionId
     )
-      throw new ConflictError('receipt_conflict');
+      throw new ConflictError('receipt_conflict', request.revision, value.view.revision);
     const pending = value.pending;
     const result = request.receipt;
+    this.diagnostics.emit('read_back', 'info', 0, undefined, undefined, {
+      targetKey: /^[a-f0-9]{64}$/.test(pending.key) ? pending.key : hash(pending.key),
+      actionType: pending.actionType,
+      receiptStatus: result.status,
+      receiptReason: result.reason,
+    });
     value.attempts[pending.key] = (value.attempts[pending.key] ?? 0) + 1;
     value.actionCount += 1;
     const success =
@@ -818,7 +868,12 @@ export class ActiveTabJobService {
         elementId: pending.elementId ?? null,
         question: 'Carrier field needs review',
         entity: '',
-        reason: result.reason === 'validation_error' ? 'validation_error' : 'read_back_mismatch',
+        reason:
+          result.reason === 'page_changed' || result.reason === 'tab_changed'
+            ? 'page_changed'
+            : result.reason === 'validation_error'
+              ? 'validation_error'
+              : 'read_back_mismatch',
       });
     }
     value.lastBatchId = request.batchId;

@@ -119,6 +119,13 @@ function recognizedOperationalTarget(
 function assertProfileSafe(
   profile: Omit<MappingProfile, 'mappingVersion' | 'status' | 'publishedAt'>,
 ): void {
+  if (
+    profile.preview &&
+    (profile.pages.length !== 1 ||
+      profile.pages[0]?.pageId !== profile.preview.pageId ||
+      profile.pages[0]?.workflowControls.length)
+  )
+    throw new Error('invalid_preview_scope');
   const expectedWorkflowName =
     profile.workflow.lineOfBusiness === 'home' ? 'Home workflow' : 'Auto workflow';
   if (
@@ -267,11 +274,13 @@ export class MemoryMappingRegistryStore implements MappingRegistryStore {
         carrierOrigin: input.workflow.carrierOrigin,
         lineOfBusiness: input.workflow.lineOfBusiness,
       };
-      const candidates = await this.list(scope);
+      const candidates = input.preview ? [] : await this.list(scope);
       const existing = candidates.filter(
         (profile) =>
           profile.mappingId === input.mappingId ||
-          sameWorkflowIdentity(profile.workflow, input.workflow),
+          (!input.preview &&
+            !profile.preview &&
+            sameWorkflowIdentity(profile.workflow, input.workflow)),
       );
       const mappingId = existing[0]?.mappingId ?? input.mappingId;
       const mappingVersion = Math.max(0, ...existing.map((profile) => profile.mappingVersion)) + 1;
@@ -279,9 +288,11 @@ export class MemoryMappingRegistryStore implements MappingRegistryStore {
         ...input,
         mappingId,
         mappingVersion,
-        status: 'testable',
+        status: input.preview ? 'preview' : 'testable',
         publishedAt: new Date().toISOString(),
       });
+      if (this.profiles.has(this.key(scope, mappingId, mappingVersion)))
+        throw new Error('mapping_version_exists');
       this.profiles.set(this.key(scope, mappingId, mappingVersion), structuredClone(profile));
       return structuredClone(profile);
     });
@@ -302,6 +313,8 @@ export class MemoryMappingRegistryStore implements MappingRegistryStore {
     mappingId: string,
     version?: number,
   ): Promise<MappingProfile | null> {
+    if (version !== undefined)
+      return structuredClone(this.profiles.get(this.key(scope, mappingId, version)) ?? null);
     const matches = (await this.list(scope)).filter(
       (profile) =>
         profile.mappingId === mappingId && (!version || profile.mappingVersion === version),
@@ -468,11 +481,13 @@ export class AzureMappingRegistryStore implements MappingRegistryStore {
       carrierOrigin: input.workflow.carrierOrigin,
       lineOfBusiness: input.workflow.lineOfBusiness,
     };
-    const profiles = await this.list(scope);
+    const profiles = input.preview ? [] : await this.list(scope);
     const existing = profiles.filter(
       (profile) =>
         profile.mappingId === input.mappingId ||
-        sameWorkflowIdentity(profile.workflow, input.workflow),
+        (!input.preview &&
+          !profile.preview &&
+          sameWorkflowIdentity(profile.workflow, input.workflow)),
     );
     const mappingId = existing[0]?.mappingId ?? input.mappingId;
     const mappingVersion = Math.max(0, ...existing.map((profile) => profile.mappingVersion)) + 1;
@@ -480,7 +495,7 @@ export class AzureMappingRegistryStore implements MappingRegistryStore {
       ...input,
       mappingId,
       mappingVersion,
-      status: 'testable',
+      status: input.preview ? 'preview' : 'testable',
       publishedAt: new Date().toISOString(),
     });
     await this.client.createEntity(this.entity(profile));
@@ -492,6 +507,8 @@ export class AzureMappingRegistryStore implements MappingRegistryStore {
     mappingId: string,
     version?: number,
   ): Promise<MappingProfile | null> {
+    if (version !== undefined)
+      return (await this.getStored(scope, mappingId, version))?.profile ?? null;
     const matches = (await this.list(scope)).filter(
       (profile) =>
         profile.mappingId === mappingId && (!version || profile.mappingVersion === version),

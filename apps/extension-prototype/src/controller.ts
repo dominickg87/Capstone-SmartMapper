@@ -39,7 +39,12 @@ const SearchResponse = z.object({
   ),
 });
 export type QuoteChoice = z.infer<typeof SearchResponse>['results'][number];
-export type TestableMapping = { mappingId: string; mappingVersion: number };
+export type TestableMapping = {
+  mappingId: string;
+  mappingVersion: number;
+  preview?: boolean;
+  formType?: 'home' | 'auto';
+};
 
 const BatchExecutionResponseSchema = z
   .object({
@@ -73,6 +78,7 @@ class ApiError extends Error {
     message: string,
     public readonly code?: DiagnosticCode,
     public readonly stage?: MappingStage,
+    public readonly apiReason?: string,
   ) {
     super(message);
   }
@@ -80,6 +86,31 @@ class ApiError extends Error {
 
 const expired = (error: unknown): boolean =>
   error instanceof ApiError && [401, 410].includes(error.status);
+
+function mappingConflictMessage(reason: string | undefined): string {
+  switch (reason) {
+    case 'preview_page_changed':
+      return 'This test is for the captured page. Resume training and capture the changed page before testing again.';
+    case 'mapping_not_trained':
+      return 'No active mapping is available for this carrier and quote type. To test a draft, open Train and choose Pause training & test. For a published version, choose Test this mapping.';
+    case 'mapping_selection_unavailable':
+      return 'The selected mapping could not be found for this account, carrier and quote type. Resume training and choose Pause training & test to create a fresh preview, or reopen the saved mapping.';
+    case 'mapping_not_testable':
+      return 'This mapping version is no longer available for testing. Open Train and create a fresh preview or select a current saved version.';
+    case 'mapping_carrier_mismatch':
+      return 'This mapping belongs to a different carrier page. Return to its trained page or open the correct saved mapping in Train.';
+    case 'preview_tab_changed':
+      return 'This preview belongs to a different browser tab. Open Train in this tab, recover your saved draft, then choose Pause training & test again.';
+    case 'preview_owner_changed':
+      return 'This preview belongs to a different M.I.A. user. Reconnect as the trainer or start an authorized training session for your account.';
+    case 'mapping_workflow_ambiguous':
+      return 'More than one mapping matches this workflow. Open the exact saved version in Train and choose Test this mapping.';
+    case 'mapping_unavailable':
+      return 'The mapping used by this job is no longer available. Cancel the job, open Train and select the saved mapping again.';
+    default:
+      return 'The page or job changed. Review it, then Resume mapping.';
+  }
+}
 
 async function json(
   origin: string,
@@ -138,16 +169,13 @@ async function json(
             : response.status === 403
               ? 'This demo account or page is not enabled for SmartMapper.'
               : response.status === 409
-                ? detail.success && detail.data.error === 'mapping_not_trained'
-                  ? 'No active mapping is available for this carrier and quote type. Open Train → Find saved training and mappings, open the saved version, and choose Test this mapping.'
-                  : detail.success && detail.data.error === 'mapping_workflow_ambiguous'
-                    ? 'More than one mapping matches this workflow. Open the exact saved version in Train and choose Test this mapping.'
-                    : 'The page or job changed. Review it, then Resume mapping.'
+                ? mappingConflictMessage(detail.success ? detail.data.error : undefined)
                 : response.status === 422
                   ? 'This quote cannot be mapped. Select a supported Home or Auto quote.'
                   : 'Mapping paused. Check the service connection and try Resume mapping.',
       detail.success ? detail.data.diagnosticCode : undefined,
       detail.success ? detail.data.stage : undefined,
+      detail.success ? detail.data.error : undefined,
     );
   }
   return (await response.json()) as unknown;
@@ -326,6 +354,7 @@ export class ExtensionExecutor {
   private halted = true;
   private busy = false;
   private activeRequest: AbortController | undefined;
+  private pausing: Promise<void> | undefined;
   private activeContentExecution:
     { tabId: number; executionId: string; port: chrome.runtime.Port } | undefined;
   private readonly progress: ProgressTracker;
@@ -377,6 +406,12 @@ export class ExtensionExecutor {
       receipt: ActionReceipt,
       index: number,
     ): Promise<boolean> => {
+      this.progress.receipt(
+        latestSession.job.jobId,
+        batch.action.type,
+        receipt,
+        page.controls.find((control) => control.elementId === batch.action.elementId)?.key,
+      );
       const checking = this.progress.begin('read_back', latestSession.job.jobId, undefined, {
         batchIndex: offset + index,
         batchSize: total,
@@ -764,7 +799,13 @@ export class ExtensionExecutor {
           carrierPageUrl,
           tabId: tab.id,
           ...(mappingSelection
-            ? { mappingSelection: { mode: 'testable', ...mappingSelection } }
+            ? {
+                mappingSelection: {
+                  mode: 'testable',
+                  mappingId: mappingSelection.mappingId,
+                  mappingVersion: mappingSelection.mappingVersion,
+                },
+              }
             : {}),
         },
         { requestId: authorizing.requestId },
@@ -787,22 +828,46 @@ export class ExtensionExecutor {
     this.activeRequest?.abort();
     this.cancelContentExecution();
     this.progress.stop();
-    const session = await jobSession();
-    if (!session) return;
-    const result = JobResponse.parse(
-      await json(
-        config.backendOrigin,
-        '/v2/jobs/' + session.job.jobId + '/pause',
-        session.token,
-        'POST',
-        {},
-      ),
-    );
-    await saveSession({ ...session, job: result.job });
-    this.update(result.job, 'Paused. Review the page, then Resume mapping.');
+    if (this.pausing) return this.pausing;
+    const operation = (async () => {
+      const session = await jobSession();
+      if (!session) return;
+      let result: z.infer<typeof JobResponse>;
+      try {
+        result = JobResponse.parse(
+          await json(
+            config.backendOrigin,
+            '/v2/jobs/' + session.job.jobId + '/pause',
+            session.token,
+            'POST',
+            {},
+          ),
+        );
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 409) throw error;
+        result = JobResponse.parse(
+          await json(
+            config.backendOrigin,
+            '/v2/jobs/' + session.job.jobId + '/pause',
+            session.token,
+            'POST',
+            {},
+          ),
+        );
+      }
+      await saveSession({ ...session, job: result.job });
+      this.update(result.job, 'Paused. Review the page, then Resume mapping.');
+    })();
+    this.pausing = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.pausing === operation) this.pausing = undefined;
+    }
   }
 
   public async cancel(): Promise<void> {
+    await this.pausing;
     this.halted = true;
     this.activeRequest?.abort();
     this.cancelContentExecution();
@@ -836,9 +901,19 @@ export class ExtensionExecutor {
     this.busy = true;
     this.halted = false;
     try {
+      await this.pausing;
       const storedSession = await jobSession();
       if (!storedSession) throw new Error('Select a quote to start mapping.');
-      let session: JobSession = storedSession;
+      const refreshed = JobResponse.parse(
+        await json(
+          config.backendOrigin,
+          '/v2/jobs/' + storedSession.job.jobId,
+          storedSession.token,
+        ),
+      );
+      if (this.halted) return;
+      let session: JobSession = { ...storedSession, job: refreshed.job };
+      await saveSession(session);
       let first = true;
       while (!this.halted) {
         this.update(session.job, 'Reading this page and opening its sections…');
@@ -882,7 +957,7 @@ export class ExtensionExecutor {
             'The carrier page stopped responding while fields were being filled. Review the page, then Resume mapping.',
           );
         if (entryExecution && entryExecution.stopReason !== 'complete') {
-          if (session.job.status === 'running') continue;
+          await this.pause();
           break;
         }
         if (entryExecution) {

@@ -8,6 +8,7 @@ import {
   RecoverTrainingDraftRequestSchema,
   ActivateMappingRequestSchema,
   PublishTrainingSessionRequestSchema,
+  PreviewTrainingPageRequestSchema,
   SaveTrainingPageRequestSchema,
   StartTrainingSessionSchema,
   TrainingPageSchema,
@@ -32,12 +33,15 @@ import {
   stableLocator,
   stablePageSignature,
   stableTargetSignature,
+  carrierReferenceCaption,
+  carrierReferenceOption,
 } from '@smartmapper/automation-core/registry';
 import type { TrainingGrantProvider } from '@smartmapper/mia-client';
 import { ApiError, type ServiceAccess } from './active-tab-service.js';
 import { ConflictError } from './checkpoints.js';
 import type { CheckpointStore } from './checkpoints.js';
 import type { MappingRegistryStore, MappingScope } from './mapping-registry.js';
+import { reuseTrainingNumbers, trainingControlDomain } from './training-discovery.js';
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
 
@@ -228,6 +232,17 @@ function logicalTrainingControls(controls: TrainingControlSnapshot[]): TrainingC
     };
     result.push({
       ...first,
+      ...(first.reference
+        ? {
+            reference: {
+              ...first.reference,
+              label: first.reference.section || 'Choose an option',
+              options: members.map((member) =>
+                carrierReferenceOption(member.reference?.label ?? ''),
+              ),
+            },
+          }
+        : {}),
       label: choiceGroup.label,
       choiceGroup,
       options: members.flatMap((member) =>
@@ -351,6 +366,8 @@ async function capturedPage(
       groupKey: repeatIndex !== null ? digest(group) : null,
       control: {
         elementId: control.elementId,
+        ...(control.locatorHints ? { locatorHints: control.locatorHints } : {}),
+        ...(control.reference ? { reference: control.reference } : {}),
         key: control.key,
         tag: control.tag,
         inputType: control.inputType,
@@ -422,7 +439,8 @@ async function trainingPageDiscriminator(page: TrainingPage): Promise<string> {
       .map(async (field) => ({
         signature: await stableTargetSignature(field.control),
         occurrence: field.occurrence,
-        repeatIndex: field.repeatIndex,
+        domain: trainingControlDomain(field.control),
+        locatorHints: field.control.locatorHints,
       })),
   );
   const workflowControls = await Promise.all(
@@ -432,9 +450,18 @@ async function trainingPageDiscriminator(page: TrainingPage): Promise<string> {
         kind: control.kind,
         entityType: control.entityType,
         signature: await stableTargetSignature(control.control),
+        domain: trainingControlDomain(control.control),
+        locatorHints: control.control.locatorHints,
       })),
   );
-  return digest(JSON.stringify({ routeId: page.routeId, fields, workflowControls }));
+  return digest(
+    JSON.stringify({
+      routeId: page.routeId,
+      signature: page.signature,
+      fields: fields.map((field) => JSON.stringify(field)).sort(),
+      workflowControls: workflowControls.map((control) => JSON.stringify(control)).sort(),
+    }),
+  );
 }
 
 function catalogLimitForPattern(catalog: MiaFieldCatalog, sourcePattern: string) {
@@ -575,6 +602,12 @@ async function privacySafeTrainingControl(control: TrainingControlSnapshot): Pro
     persistedSemanticString(control.label) &&
     persistedSemanticString(control.section) &&
     control.context.every(persistedSemanticString) &&
+    (!control.reference ||
+      [control.reference.label, control.reference.section, ...control.reference.options].every(
+        (caption) => carrierReferenceCaption(caption) === caption,
+      )) &&
+    (!control.reference ||
+      control.reference.options.every((caption) => carrierReferenceOption(caption) === caption)) &&
     (!control.choiceGroup ||
       (persistedSemanticString(control.choiceGroup.key) &&
         persistedSemanticString(control.choiceGroup.label))) &&
@@ -770,6 +803,9 @@ export class TrainingService {
     // The old authorization may have expired. Fresh M.I.A. authorization permits recovery of
     // its durable, value-free draft; the old tab, token and expiry are never reused or changed.
     record.value.view.pages = structuredClone(donor.value.view.pages);
+    record.value.view.mappingId = donor.value.view.mappingId;
+    if (donor.value.view.previewResults)
+      record.value.view.previewResults = structuredClone(donor.value.view.previewResults);
     record.value.view.workflow = structuredClone(donor.value.view.workflow);
     return { training: await this.save(record.partition, trainingId, record) };
   }
@@ -789,6 +825,82 @@ export class TrainingService {
     record.value.view.workflow = structuredClone(mapping.workflow);
     record.value.view.status = mapping.status === 'testable' ? 'testable' : 'verified';
     return { training: await this.save(record.partition, trainingId, record), mapping };
+  }
+
+  public async editMapping(trainingId: string, token: string, input: unknown) {
+    const request = OpenSavedMappingRequestSchema.parse(input);
+    const record = await this.authorized(trainingId, token);
+    this.assertEmptyDraft(record.value.view, request.revision);
+    const mapping = await this.registry.get(
+      this.scope(record.value.view),
+      request.mappingId,
+      request.mappingVersion,
+    );
+    if (!mapping || !['testable', 'verified', 'active'].includes(mapping.status))
+      throw new ApiError(404, 'saved_mapping_not_found');
+    if (mapping.catalogRevision !== record.value.catalog.schemaRevision)
+      throw new ApiError(409, 'saved_training_catalog_changed');
+    const snapshot = (
+      target: MappingProfile['pages'][number]['fields'][number]['target'],
+      sequence: number,
+    ): TrainingControlSnapshot => ({
+      tag: target.tag,
+      ...(target.locatorHints ? { locatorHints: target.locatorHints } : {}),
+      ...(target.reference ? { reference: target.reference } : {}),
+      inputType: target.inputType,
+      role: target.role,
+      label: target.label,
+      section: target.section,
+      context: target.context,
+      required: target.required,
+      humanOnly: target.humanOnly,
+      choiceGroup: target.choiceGroup,
+      choiceValue: target.choiceValue,
+      options: target.options,
+      operationalTarget: target.operationalTarget,
+      elementId: `e${sequence}`,
+      key: target.signature,
+      disabled: false,
+      ordinaryNext: false,
+      addEntityType: null,
+      repeatHint: null,
+      rect: { x: 0, y: 0, width: 0, height: 0 },
+    });
+    record.value.view.workflow = structuredClone(mapping.workflow);
+    record.value.view.mappingId = mapping.mappingId;
+    record.value.view.pages = mapping.pages.map((page) => ({
+      pageId: page.pageId,
+      sequence: page.sequence,
+      scenarioLabel: page.scenarioLabel,
+      routeId: page.routeId,
+      signature: page.signature,
+      fingerprint: page.signature,
+      fields: page.fields.map((field) => ({
+        fieldId: field.fieldId,
+        ...(field.logicalFieldId ? { logicalFieldId: field.logicalFieldId } : {}),
+        sequence: field.sequence,
+        occurrence: field.target.occurrence,
+        repeatIndex: field.target.repeatIndex,
+        repeatEntityType: field.target.repeatEntityType,
+        groupKey: field.target.groupKey,
+        control: snapshot(field.target, field.sequence),
+        disposition: structuredClone(field.disposition),
+      })),
+      workflowControls: page.workflowControls.map((control) => ({
+        workflowControlId: control.workflowControlId,
+        ...(control.logicalFieldId ? { logicalFieldId: control.logicalFieldId } : {}),
+        sequence: control.sequence,
+        kind: control.kind,
+        entityType: control.entityType,
+        decision: 'use',
+        control: {
+          ...snapshot(control.target, control.sequence),
+          ordinaryNext: control.kind === 'ordinary_next',
+          addEntityType: control.entityType,
+        },
+      })),
+    }));
+    return { training: await this.save(record.partition, trainingId, record) };
   }
 
   public async cancel(trainingId: string, token: string): Promise<void> {
@@ -825,12 +937,15 @@ export class TrainingService {
       `Page ${pages.length + 1}`,
     );
     const discriminator = await trainingPageDiscriminator(page);
-    if (
-      (await Promise.all(pages.map((candidate) => trainingPageDiscriminator(candidate)))).includes(
-        discriminator,
-      )
-    )
+    const duplicate = (await Promise.all(pages.map(trainingPageDiscriminator))).indexOf(
+      discriminator,
+    );
+    if (duplicate >= 0) {
+      if (request.discover) return { training: record.value.view, page: pages[duplicate]! };
       throw new ApiError(409, 'duplicate_training_page');
+    }
+    if (pages.length >= 100) throw new ApiError(422, 'training_page_limit');
+    if (request.discover) await reuseTrainingNumbers(page, pages, request.fromPageId, nextField);
     record.value.view.pages.push(page);
     const training = await this.save(record.partition, trainingId, record);
     return { training, page };
@@ -869,6 +984,10 @@ export class TrainingService {
             `${update.repeatBinding.entityType}\0${normalizedGroup(field.control)}`,
           );
         }
+      }
+      if (update.disposition === null) {
+        field.disposition = null;
+        continue;
       }
       if (!catalogAllows(update.disposition, record.value.catalog))
         throw new ApiError(400, 'unknown_mia_catalog_field');
@@ -911,8 +1030,106 @@ export class TrainingService {
       if (!control) throw new ApiError(400, 'unknown_workflow_control');
       control.decision = update.decision;
     }
+    // A logical data field shares its annotation across same-route snapshots. Snapshot IDs remain
+    // distinct, so proof is still required for every scenario. Workflow approvals never propagate.
+    for (const update of request.fields) {
+      const field = page.fields.find((candidate) => candidate.fieldId === update.fieldId)!;
+      const logicalId = field.logicalFieldId ?? field.fieldId;
+      for (const otherPage of record.value.view.pages) {
+        if (otherPage.pageId === pageId || otherPage.routeId !== page.routeId) continue;
+        for (const other of otherPage.fields) {
+          if ((other.logicalFieldId ?? other.fieldId) !== logicalId) continue;
+          if (trainingControlDomain(other.control) !== trainingControlDomain(field.control))
+            continue;
+          other.disposition = structuredClone(field.disposition);
+          other.repeatIndex = field.repeatIndex;
+          other.repeatEntityType = field.repeatEntityType;
+          other.groupKey = field.groupKey;
+        }
+      }
+    }
     const training = await this.save(record.partition, trainingId, record);
     return { training, page };
+  }
+
+  private async mappingPage(
+    page: TrainingPage,
+    preview = false,
+  ): Promise<MappingProfile['pages'][number]> {
+    return {
+      pageId: page.pageId,
+      sequence: page.sequence,
+      scenarioLabel: page.scenarioLabel,
+      routeId: page.routeId,
+      signature: page.signature,
+      fields: await Promise.all(
+        page.fields
+          .filter((field) => field.disposition !== null)
+          .map(async (field) => ({
+            fieldId: field.fieldId,
+            ...(field.logicalFieldId ? { logicalFieldId: field.logicalFieldId } : {}),
+            sequence: field.sequence,
+            target: await stableLocator(
+              field.control,
+              field.occurrence,
+              field.repeatIndex,
+              field.groupKey,
+              field.repeatEntityType,
+            ),
+            disposition: field.disposition!,
+          })),
+      ),
+      workflowControls: await Promise.all(
+        page.workflowControls
+          .filter((control) => !preview && control.decision === 'use')
+          .map(async (control) => ({
+            workflowControlId: control.workflowControlId,
+            ...(control.logicalFieldId ? { logicalFieldId: control.logicalFieldId } : {}),
+            sequence: control.sequence,
+            kind: control.kind,
+            entityType: control.entityType,
+            target: await stableLocator(control.control, 0, null, null),
+          })),
+      ),
+    };
+  }
+
+  public async preview(trainingId: string, token: string, input: unknown) {
+    const request = PreviewTrainingPageRequestSchema.parse(input);
+    const record = await this.authorized(trainingId, token);
+    const view = record.value.view;
+    if (request.revision !== view.revision) throw new ConflictError('revision_conflict');
+    if (view.status !== 'draft') throw new ConflictError('training_not_draft');
+    const page = view.pages.find((item) => item.pageId === request.pageId);
+    if (!page) throw new ApiError(404, 'unknown_training_page');
+    if (!page.fields.some((field) => field.disposition))
+      throw new ApiError(422, 'Choose at least one field mapping before testing this page.');
+    const mapping = await this.registry.publish({
+      version: '2.0',
+      mappingId: randomUUID(),
+      tenantId: view.binding.tenantId,
+      createdByUserId: view.binding.userId,
+      workflow: view.workflow,
+      catalogRevision: view.catalogRevision,
+      entityLimits: record.value.catalog.entityLimits,
+      preview: {
+        trainingId,
+        revision: view.revision,
+        pageId: page.pageId,
+        tabId: view.binding.tabId,
+      },
+      pages: [await this.mappingPage(page, true)],
+      verification: {
+        coveredPageIds: [],
+        coveredFieldIds: [],
+        coveredWorkflowControlIds: [],
+        evidenceDigests: [],
+        lastVerifiedAt: null,
+      },
+      createdAt: new Date().toISOString(),
+    });
+    // A preview is immutable and never changes or completes the editable draft.
+    return { training: TrainingSessionViewSchema.parse(view), mapping };
   }
 
   public async publish(
@@ -951,40 +1168,7 @@ export class TrainingService {
         evidenceDigests: [],
         lastVerifiedAt: null,
       },
-      pages: await Promise.all(
-        record.value.view.pages.map(async (page) => ({
-          pageId: page.pageId,
-          sequence: page.sequence,
-          scenarioLabel: page.scenarioLabel,
-          routeId: page.routeId,
-          signature: page.signature,
-          fields: await Promise.all(
-            page.fields.map(async (field) => ({
-              fieldId: field.fieldId,
-              sequence: field.sequence,
-              target: await stableLocator(
-                field.control,
-                field.occurrence,
-                field.repeatIndex,
-                field.groupKey,
-                field.repeatEntityType,
-              ),
-              disposition: field.disposition!,
-            })),
-          ),
-          workflowControls: await Promise.all(
-            page.workflowControls
-              .filter((control) => control.decision === 'use')
-              .map(async (control) => ({
-                workflowControlId: control.workflowControlId,
-                sequence: control.sequence,
-                kind: control.kind,
-                entityType: control.entityType,
-                target: await stableLocator(control.control, 0, null, null),
-              })),
-          ),
-        })),
-      ),
+      pages: await Promise.all(record.value.view.pages.map((page) => this.mappingPage(page))),
       createdAt: now,
     });
     record.value.view.status = 'testable';
@@ -999,6 +1183,57 @@ export class TrainingService {
       carrierOrigin: view.binding.carrierOrigin,
       lineOfBusiness: view.workflow.lineOfBusiness,
     };
+  }
+
+  public async previewResult(trainingId: string, token: string, input: unknown) {
+    const request = VerifyMappingRequestSchema.parse(input);
+    const record = await this.authorized(trainingId, token);
+    if (request.revision !== record.value.view.revision)
+      throw new ConflictError('revision_conflict');
+    const evidence = await this.jobs.read(request.jobToken.split('.')[0]!, request.jobId);
+    if (
+      !evidence ||
+      !timingSafeEqual(
+        Buffer.from(evidence.value.tokenHash, 'hex'),
+        Buffer.from(digest(request.jobToken), 'hex'),
+      )
+    )
+      throw new ApiError(401, 'invalid_mapping_test_evidence');
+    const job = evidence.value.view;
+    const binding = record.value.view.binding;
+    if (
+      job.binding.tenantId !== binding.tenantId ||
+      job.binding.userId !== binding.userId ||
+      job.binding.carrierOrigin !== binding.carrierOrigin ||
+      job.binding.tabId !== binding.tabId ||
+      Date.parse(job.binding.expiresAt) <= Date.now() ||
+      !evidence.value.mappingId ||
+      evidence.value.mappingVersion !== request.mappingVersion ||
+      !['human_input', 'page_complete', 'paused', 'blocked'].includes(job.status)
+    )
+      throw new ApiError(409, 'invalid_preview_result');
+    const mapping = await this.registry.get(
+      this.scope(record.value.view),
+      evidence.value.mappingId,
+      request.mappingVersion,
+    );
+    if (mapping?.status !== 'preview' || mapping.preview?.trainingId !== trainingId)
+      throw new ApiError(409, 'invalid_preview_result');
+    record.value.view.previewResults = [
+      ...(record.value.view.previewResults ?? [])
+        .filter((result) => result.mappingId !== mapping.mappingId)
+        .slice(-99),
+      {
+        mappingId: mapping.mappingId,
+        pageId: mapping.preview.pageId,
+        draftRevision: mapping.preview.revision,
+        verified: job.verified,
+        failed: job.failed,
+        reviews: job.reviews.length,
+        recordedAt: new Date().toISOString(),
+      },
+    ];
+    return { training: await this.save(record.partition, trainingId, record) };
   }
 
   public async verify(

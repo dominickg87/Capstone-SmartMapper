@@ -1,0 +1,146 @@
+.reference-app {
+  max-width: 1500px;
+  padding: 38px 44px 70px;
+}
+.reference-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 26px;
+  border-bottom: 1px solid #d9e3ee;
+}
+.reference-header h1 {
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: -1.3px;
+}
+.reference-header p {
+  color: #536b86;
+}
+.reference-header > div:last-child {
+  display: grid;
+  gap: 14px;
+  justify-items: end;
+}
+.reference-version {
+  font-size: 12px;
+  color: #536b86;
+}
+.reference-editor {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 20px 28px;
+  align-items: start;
+}
+.reference-editor > section {
+  margin: 0;
+  grid-column: 2;
+}
+.reference-editor .saved-training {
+  display: none;
+}
+.reference-editor .training-summary {
+  grid-column: 1 / -1;
+  background: #0f2f4e;
+  color: #fff;
+  padding: 22px 28px;
+}
+.reference-editor .training-summary p {
+  color: #d0e3f3;
+}
+.reference-editor .training-summary h2 {
+  font-size: 23px;
+}
+.reference-pages {
+  grid-column: 1;
+  grid-row: 2 / span 5;
+  position: sticky;
+  top: 24px;
+  padding: 14px 0;
+}
+.reference-pages h2 {
+  margin: 12px 0 20px;
+  font-size: 20px;
+}
+.reference-pages button {
+  width: 100%;
+  display: grid;
+  text-align: left;
+  gap: 7px;
+  background: transparent;
+  color: #37506b;
+  border: 1px solid transparent;
+  margin: 0 0 8px;
+  padding: 15px;
+}
+.reference-pages button.selected {
+  background: #fff;
+  border-color: #9ab3d2;
+  box-shadow: 0 3px 12px #16334f0a;
+  color: #153e72;
+}
+.reference-pages small {
+  font-weight: 400;
+}
+.reference-pages p {
+  font-size: 12px;
+  color: #647891;
+  padding: 10px;
+}
+.reference-editor .training-fields {
+  padding: 26px;
+}
+.reference-editor .field-list {
+  gap: 18px;
+}
+.reference-editor .training-field {
+  background: #fff;
+  border: 1px solid #dce5ef;
+  box-shadow: 0 2px 5px #18365205;
+}
+.reference-editor .training-field.active {
+  border-color: #7c9dbf;
+}
+.reference-editor .field-heading {
+  cursor: default;
+}
+.reference-editor .field-description strong {
+  font-size: 16px;
+}
+.reference-editor .field-card-header {
+  padding: 6px;
+  background: #f6f9fc;
+}
+.reference-editor .reference-search {
+  margin: 12px 0 22px;
+  background: #f8fafc;
+}
+.reference-editor .reference-capture-hidden {
+  display: none;
+}
+.reference-editor .training-actions {
+  border-top: 4px solid #1b7a68;
+}
+.reference-editor .complete-mapping {
+  max-width: 340px;
+}
+@media (max-width: 850px) {
+  .reference-app {
+    padding: 22px 18px;
+  }
+  .reference-editor {
+    grid-template-columns: 1fr;
+  }
+  .reference-editor > section,
+  .reference-editor .training-summary {
+    grid-column: 1;
+  }
+  .reference-pages {
+    position: static;
+    grid-row: auto;
+  }
+  .reference-header {
+    align-items: start;
+    flex-direction: column;
+  }
+}

@@ -8,6 +8,7 @@ import type {
   TrainingControlSnapshot,
   TrainingPageObservation,
 } from '@smartmapper/contracts';
+import { ActiveTabJobService } from './active-tab-service.js';
 import { MemoryCheckpointStore } from './checkpoints.js';
 import { MemoryMappingRegistryStore } from './mapping-registry.js';
 import { MemoryTrainingSessionStore, TrainingService } from './training-service.js';
@@ -85,6 +86,7 @@ const repeatHint = (item: PageControl): TrainingControlSnapshot['repeatHint'] =>
 };
 
 const snapshot = (item: PageControl): TrainingControlSnapshot => ({
+  ...(item.locatorHints ? { locatorHints: item.locatorHints } : {}),
   elementId: `e${BigInt(`0x${hash(item.elementId).slice(0, 12)}`).toString(10)}`,
   key: hash(item.key),
   tag: item.tag,
@@ -280,6 +282,241 @@ function recoveryHarness() {
   };
   return { identity, service, store, registry, start, savedDraft };
 }
+
+describe('automatic field discovery', () => {
+  it('keeps 1–20 and their annotations, allocates 21–40, and restores hidden scenarios without duplicates', async () => {
+    const { service, start } = recoveryHarness();
+    const session = await start(7);
+    const controls = Array.from({ length: 40 }, (_, index) =>
+      field({
+        label: `Synthetic field ${index + 1}`,
+        rect: { x: 10, y: index * 30, width: 100, height: 20 },
+        locatorHints: { name: hash(`field-${index}`) },
+      }),
+    );
+    const first = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), controls.slice(0, 20)),
+    });
+    const saved = await service.savePage(
+      session.training.trainingId,
+      first.page.pageId,
+      session.token,
+      {
+        revision: first.training.revision,
+        fields: [{ fieldId: first.page.fields[0]!.fieldId, disposition: { kind: 'ignore' } }],
+        workflowControls: [],
+      },
+    );
+    const second = await service.capture(session.training.trainingId, session.token, {
+      revision: saved.training.revision,
+      discover: true,
+      fromPageId: first.page.pageId,
+      observation: trainingObservation(7, 'page-one', '2'.repeat(64), controls),
+    });
+    expect(second.page.fields.map((item) => item.sequence)).toEqual(
+      Array.from({ length: 40 }, (_, index) => index + 1),
+    );
+    expect(second.page.fields[0]!.disposition).toEqual({ kind: 'ignore' });
+    expect(second.page.fields[0]!.fieldId).not.toBe(first.page.fields[0]!.fieldId);
+    expect(second.page.fields[0]!.logicalFieldId).toBe(first.page.fields[0]!.fieldId);
+    const edited = await service.savePage(
+      session.training.trainingId,
+      second.page.pageId,
+      session.token,
+      {
+        revision: second.training.revision,
+        fields: [{ fieldId: second.page.fields[0]!.fieldId, disposition: null }],
+        workflowControls: [],
+      },
+    );
+    expect(edited.training.pages[0]!.fields[0]!.disposition).toBeNull();
+    const hidden = await service.capture(session.training.trainingId, session.token, {
+      revision: edited.training.revision,
+      discover: true,
+      fromPageId: second.page.pageId,
+      observation: trainingObservation(7, 'page-one', '3'.repeat(64), controls.slice(0, 20)),
+    });
+    expect(hidden.page.pageId).toBe(first.page.pageId);
+    expect(hidden.training.revision).toBe(edited.training.revision);
+    expect(hidden.training.pages).toHaveLength(2);
+    const revealed = await service.capture(session.training.trainingId, session.token, {
+      revision: hidden.training.revision,
+      discover: true,
+      fromPageId: hidden.page.pageId,
+      observation: trainingObservation(7, 'page-one', '4'.repeat(64), controls),
+    });
+    expect(revealed.page.pageId).toBe(second.page.pageId);
+    expect(revealed.training.pages).toHaveLength(2);
+    await expect(
+      service.capture(session.training.trainingId, session.token, {
+        revision: 0,
+        discover: true,
+        observation: trainingObservation(7, 'page-one', '5'.repeat(64), controls),
+      }),
+    ).rejects.toThrow('revision_conflict');
+  });
+
+  it('does not reuse fields across routes, changed meanings, option domains, or human-only boundaries', async () => {
+    const { service, start } = recoveryHarness();
+    const session = await start(7);
+    const original = field({ locatorHints: { id: hash('stable-input') } });
+    const first = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), [original]),
+    });
+    let revision = first.training.revision;
+    for (const [index, control] of [
+      field({ ...original, locatorHints: { id: hash('different-input') } }),
+      field({ ...original, label: 'Last name' }),
+      field({ ...original, humanOnly: true }),
+      field({
+        ...original,
+        tag: 'select',
+        inputType: 'select-one',
+        options: [{ value: 'A', label: 'A' }],
+      }),
+    ].entries()) {
+      const result = await service.capture(session.training.trainingId, session.token, {
+        revision,
+        discover: true,
+        fromPageId: first.page.pageId,
+        observation: trainingObservation(7, 'page-one', '2'.repeat(64), [control]),
+      });
+      revision = result.training.revision;
+      expect(result.page.fields[0]!.sequence).toBe(index + 2);
+      expect(result.page.fields[0]!.logicalFieldId).not.toBe(first.page.fields[0]!.fieldId);
+    }
+    const other = await service.capture(session.training.trainingId, session.token, {
+      revision,
+      discover: true,
+      fromPageId: first.page.pageId,
+      observation: trainingObservation(7, 'page-two', '3'.repeat(64), [original]),
+    });
+    expect(other.page.fields[0]!.sequence).toBe(6);
+  });
+
+  it('preserves shared field identity through publishing and reopening an editable version', async () => {
+    const { service, start } = recoveryHarness();
+    const session = await start(7);
+    const firstControl = field({ required: false, locatorHints: { name: hash('first') } });
+    const first = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), [firstControl]),
+    });
+    const second = await service.capture(session.training.trainingId, session.token, {
+      revision: first.training.revision,
+      discover: true,
+      fromPageId: first.page.pageId,
+      observation: trainingObservation(7, 'page-one', '2'.repeat(64), [
+        firstControl,
+        field({ label: 'Optional note', required: false }),
+      ]),
+    });
+    const saved = await service.savePage(
+      session.training.trainingId,
+      second.page.pageId,
+      session.token,
+      {
+        revision: second.training.revision,
+        fields: second.page.fields.map((item) => ({
+          fieldId: item.fieldId,
+          disposition: { kind: 'ignore' },
+        })),
+        workflowControls: [],
+      },
+    );
+    const published = await service.publish(session.training.trainingId, session.token, {
+      revision: saved.training.revision,
+    });
+    expect(published.mapping.pages[1]!.fields[0]!.logicalFieldId).toBe(
+      first.page.fields[0]!.fieldId,
+    );
+    const fresh = await start(19);
+    const editing = await service.editMapping(fresh.training.trainingId, fresh.token, {
+      revision: 0,
+      mappingId: published.mapping.mappingId,
+      mappingVersion: published.mapping.mappingVersion,
+    });
+    const changed = await service.savePage(
+      fresh.training.trainingId,
+      second.page.pageId,
+      fresh.token,
+      {
+        revision: editing.training.revision,
+        fields: [{ fieldId: second.page.fields[0]!.fieldId, disposition: null }],
+        workflowControls: [],
+      },
+    );
+    expect(changed.training.pages[0]!.fields[0]!.disposition).toBeNull();
+    expect(changed.training.pages[1]!.fields[0]!.disposition).toBeNull();
+    expect(published.mapping.pages[0]!.fields[0]!.disposition).toEqual({ kind: 'ignore' });
+  });
+
+  it('keeps repeated fields distinct on insertion and never copies navigation approval to new scenarios', async () => {
+    const { service, start } = recoveryHarness();
+    const session = await start(7);
+    const driver = (name: string, y: number) =>
+      field({
+        label: 'First name',
+        section: 'Driver',
+        locatorHints: { name: hash(name) },
+        rect: { x: 10, y, width: 100, height: 20 },
+      });
+    const a = driver('driver-a', 10);
+    const b = driver('driver-b', 50);
+    const next = field({
+      tag: 'button',
+      inputType: 'button',
+      role: 'button',
+      label: 'Next',
+      ordinaryNext: true,
+      rect: { x: 10, y: 100, width: 100, height: 20 },
+    });
+    const first = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), [a, b, next]),
+    });
+    const saved = await service.savePage(
+      session.training.trainingId,
+      first.page.pageId,
+      session.token,
+      {
+        revision: first.training.revision,
+        fields: [],
+        workflowControls: [
+          { workflowControlId: first.page.workflowControls[0]!.workflowControlId, decision: 'use' },
+        ],
+      },
+    );
+    const second = await service.capture(session.training.trainingId, session.token, {
+      revision: saved.training.revision,
+      discover: true,
+      fromPageId: first.page.pageId,
+      observation: trainingObservation(7, 'page-one', '2'.repeat(64), [
+        driver('driver-new', 0),
+        a,
+        b,
+        next,
+      ]),
+    });
+    expect(
+      second.page.fields.find((item) => item.control.locatorHints?.name === hash('driver-a'))!
+        .sequence,
+    ).toBe(1);
+    expect(
+      second.page.fields.find((item) => item.control.locatorHints?.name === hash('driver-b'))!
+        .sequence,
+    ).toBe(2);
+    expect(
+      second.page.fields.find((item) => item.control.locatorHints?.name === hash('driver-new'))!
+        .sequence,
+    ).toBe(4);
+    expect(second.page.workflowControls[0]!.sequence).toBe(3);
+    expect(second.page.workflowControls[0]!.decision).toBeNull();
+    expect(second.training.pages[0]!.workflowControls[0]!.decision).toBe('use');
+  });
+});
 
 describe('saved training recovery', () => {
   it('copies saved numbered choices into a fresh tab authorization without changing the original', async () => {
@@ -1044,4 +1281,259 @@ describe('training service', () => {
     expect(third.page.fields.slice(1).map((item) => item.repeatIndex)).toEqual([0, 1]);
     expect(third.page.fields[1]?.groupKey).toBe(third.page.fields[2]?.groupKey);
   });
+});
+
+describe('training page previews', () => {
+  it('snapshots partial choices without completing the draft or enabling navigation', async () => {
+    const { service, registry, start } = recoveryHarness();
+    const session = await start(7);
+    const captured = await service.capture(session.training.trainingId, session.token, {
+      revision: 0,
+      observation: trainingObservation(7, 'page-one', '1'.repeat(64), [
+        field({}),
+        field({ label: 'Last name' }),
+        field({
+          tag: 'button',
+          inputType: 'button',
+          role: 'button',
+          label: 'Next',
+          ordinaryNext: true,
+        }),
+      ]),
+    });
+    const saved = await service.savePage(
+      session.training.trainingId,
+      captured.page.pageId,
+      session.token,
+      {
+        revision: captured.training.revision,
+        fields: [{ fieldId: captured.page.fields[0]!.fieldId, disposition: { kind: 'ignore' } }],
+        workflowControls: captured.page.workflowControls.map((control) => ({
+          workflowControlId: control.workflowControlId,
+          decision: 'use',
+        })),
+      },
+    );
+    const preview = await service.preview(session.training.trainingId, session.token, {
+      revision: saved.training.revision,
+      pageId: captured.page.pageId,
+    });
+    expect(preview.training).toEqual(saved.training);
+    expect(preview.training.status).toBe('draft');
+    expect(preview.mapping).toMatchObject({
+      status: 'preview',
+      preview: {
+        trainingId: session.training.trainingId,
+        revision: saved.training.revision,
+        pageId: captured.page.pageId,
+        tabId: 7,
+      },
+    });
+    expect(preview.mapping.pages[0]!.fields).toHaveLength(1);
+    expect(preview.mapping.pages[0]!.workflowControls).toEqual([]);
+    await expect(registry.publish({ ...preview.mapping })).rejects.toThrow(
+      'mapping_version_exists',
+    );
+    const changed = await service.savePage(
+      session.training.trainingId,
+      captured.page.pageId,
+      session.token,
+      {
+        revision: saved.training.revision,
+        fields: [{ fieldId: captured.page.fields[0]!.fieldId, disposition: null }],
+      },
+    );
+    expect(changed.page.fields[0]!.disposition).toBeNull();
+    const scope = { tenantId: 'tenant', carrierOrigin, lineOfBusiness: 'home' as const };
+    expect(
+      (await registry.get(scope, preview.mapping.mappingId, 1))!.pages[0]!.fields[0]!.disposition,
+    ).toEqual({ kind: 'ignore' });
+    await expect(
+      registry.recordVerification(scope, preview.mapping.mappingId, 1, {
+        pageIds: [captured.page.pageId],
+        fieldIds: [],
+        workflowControlIds: [],
+        evidenceDigest: 'a'.repeat(64),
+      }),
+    ).rejects.toThrow('mapping_not_testable');
+    await expect(registry.setActive(scope, preview.mapping.mappingId, 1)).rejects.toThrow();
+    expect((await service.library(session.training.trainingId, session.token)).mappings).toEqual(
+      [],
+    );
+    await expect(
+      service.publish(session.training.trainingId, session.token, {
+        revision: changed.training.revision,
+      }),
+    ).rejects.toMatchObject({ code: 'unmapped_training_field' });
+    await expect(
+      service.preview(session.training.trainingId, session.token, {
+        revision: saved.training.revision,
+        pageId: captured.page.pageId,
+      }),
+    ).rejects.toThrow('revision_conflict');
+    await expect(
+      service.preview(session.training.trainingId, session.token, {
+        revision: changed.training.revision,
+        pageId: crypto.randomUUID(),
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('copies a published version into a draft while preserving the original and version lineage', async () => {
+    const { service, registry, start, savedDraft } = recoveryHarness();
+    const old = await savedDraft();
+    const published = await service.publish(old.training.trainingId, old.token, {
+      revision: old.training.revision,
+    });
+    const fresh = await start(19);
+    const editing = await service.editMapping(fresh.training.trainingId, fresh.token, {
+      revision: 0,
+      mappingId: published.mapping.mappingId,
+      mappingVersion: published.mapping.mappingVersion,
+    });
+    expect(editing.training.status).toBe('draft');
+    expect(editing.training.pages[0]!.fields[0]!.fieldId).toBe(
+      old.training.pages[0]!.fields[0]!.fieldId,
+    );
+    const preview = await service.preview(fresh.training.trainingId, fresh.token, {
+      revision: editing.training.revision,
+      pageId: editing.training.pages[0]!.pageId,
+    });
+    expect(preview.mapping.mappingId).not.toBe(published.mapping.mappingId);
+    const replacement = await service.publish(fresh.training.trainingId, fresh.token, {
+      revision: editing.training.revision,
+    });
+    expect(replacement.mapping.mappingId).toBe(published.mapping.mappingId);
+    expect(replacement.mapping.mappingVersion).toBe(2);
+    expect(
+      await registry.get(
+        { tenantId: 'tenant', carrierOrigin, lineOfBusiness: 'home' },
+        published.mapping.mappingId,
+        1,
+      ),
+    ).toEqual(published.mapping);
+    await expect(
+      service.editMapping(fresh.training.trainingId, fresh.token, {
+        revision: replacement.training.revision,
+        mappingId: published.mapping.mappingId,
+        mappingVersion: 1,
+      }),
+    ).rejects.toThrow();
+  });
+});
+
+it('restricts preview jobs to the trainer, tab, page and explicit test selection', async () => {
+  const { service, registry, savedDraft } = recoveryHarness();
+  const draft = await savedDraft();
+  const preview = await service.preview(draft.training.trainingId, draft.token, {
+    revision: draft.training.revision,
+    pageId: draft.training.pages[0]!.pageId,
+  });
+  const identity = { userId: 'user' };
+  const runtime = new ActiveTabJobService(
+    new MemoryCheckpointStore(),
+    {
+      redeem: (request) =>
+        Promise.resolve({
+          version: '2.0',
+          binding: {
+            tenantId: 'tenant',
+            userId: identity.userId,
+            quoteId: 'synthetic',
+            carrierOrigin,
+            tabId: request.tabId,
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+          sourceToken: 's'.repeat(43),
+          source: {
+            version: '2.0',
+            tenantId: 'tenant',
+            userId: identity.userId,
+            quoteId: 'synthetic',
+            formType: 'home',
+            revision: '1',
+            answers: [],
+            unavailablePaths: [],
+          },
+        }),
+      read: () =>
+        Promise.resolve({
+          version: '2.0',
+          tenantId: 'tenant',
+          userId: identity.userId,
+          quoteId: 'synthetic',
+          formType: 'home',
+          revision: '1',
+          answers: [],
+          unavailablePaths: [],
+        }),
+      revoke: () => Promise.resolve(),
+    },
+    registry,
+    {
+      miaOrigins: new Set([miaOrigin]),
+      carrierOrigins: new Set([carrierOrigin]),
+      principals: new Set(['tenant/user', 'tenant/other']),
+      autoNext: true,
+    },
+  );
+  const request = {
+    miaOrigin,
+    code: 'c'.repeat(32),
+    verifier: 'v'.repeat(43),
+    carrierOrigin,
+    carrierPageUrl: carrierOrigin,
+    tabId: 7,
+  };
+  const selection = { mode: 'testable', mappingId: preview.mapping.mappingId, mappingVersion: 1 };
+  await expect(runtime.start(request)).rejects.toMatchObject({ code: 'mapping_not_trained' });
+  await expect(
+    runtime.start({
+      ...request,
+      mappingSelection: { ...selection, mappingId: crypto.randomUUID() },
+    }),
+  ).rejects.toMatchObject({ status: 409, code: 'mapping_selection_unavailable' });
+  await expect(
+    runtime.start({ ...request, tabId: 8, mappingSelection: selection }),
+  ).rejects.toMatchObject({ status: 409, code: 'preview_tab_changed' });
+  identity.userId = 'other';
+  await expect(runtime.start({ ...request, mappingSelection: selection })).rejects.toMatchObject({
+    status: 409,
+    code: 'preview_owner_changed',
+  });
+  identity.userId = 'user';
+  const job = await runtime.start({ ...request, mappingSelection: selection });
+  await expect(
+    runtime.observe(job.job.jobId, job.token, {
+      revision: job.job.revision,
+      resume: false,
+      observation: {
+        version: '2.0',
+        tabId: 7,
+        origin: carrierOrigin,
+        pageStateId: crypto.randomUUID(),
+        documentId: 'synthetic',
+        routeId: 'b'.repeat(64),
+        fingerprint: 'a'.repeat(64),
+        title: '',
+        headings: [],
+        controls: [],
+        errors: [],
+        authenticationRequired: false,
+        unsupportedFrames: 0,
+        omittedControls: 0,
+        capturedAt: new Date().toISOString(),
+        capture: { complete: true, unexpanded: 0, mode: 'targeted' },
+      },
+    }),
+  ).rejects.toMatchObject({ code: 'preview_page_changed' });
+  expect((await runtime.read(job.job.jobId, job.token)).status).toBe('paused');
+  await expect(
+    service.previewResult(draft.training.trainingId, draft.token, {
+      revision: draft.training.revision,
+      mappingVersion: 1,
+      jobId: job.job.jobId,
+      jobToken: 'a'.repeat(64) + '.' + 'x'.repeat(43),
+    }),
+  ).rejects.toMatchObject({ status: 401 });
 });

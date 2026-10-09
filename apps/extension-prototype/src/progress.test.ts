@@ -8,6 +8,33 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it.each([
+  'mapping_not_trained',
+  'mapping_workflow_ambiguous',
+  'mapping_selection_unavailable',
+  'mapping_not_testable',
+  'mapping_carrier_mismatch',
+  'preview_tab_changed',
+  'preview_owner_changed',
+])('retains %s when startup fails before a job exists', (apiReason) => {
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '0.3.6' }) } });
+  const tracker = new ProgressTracker(() => undefined);
+  tracker.finish(tracker.begin('authorize', null), {
+    status: 409,
+    apiReason,
+    message: 'Customer-private answer',
+  });
+  const report = JSON.parse(tracker.report()) as { events: DiagnosticEvent[] };
+  expect(report.events.at(-1)).toMatchObject({
+    jobId: null,
+    stage: 'authorize',
+    code: 'conflict',
+    apiReason,
+  });
+  expect(tracker.report()).not.toContain('Customer-private');
+});
+
 it('reports the backend step at timeout and exports only bounded metadata', () => {
   vi.spyOn(console, 'info').mockImplementation(() => undefined);
   vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '0.2.9' }) } });
@@ -49,4 +76,31 @@ it('does not revive a stopped spinner when delayed browser work completes', asyn
   complete();
   await waiting;
   expect(update.mock.calls.at(-1)?.[0]).toMatchObject({ active: false });
+});
+
+it('exports actual blocked receipts and known conflict reasons without customer values', () => {
+  vi.spyOn(console, 'info').mockImplementation(() => undefined);
+  vi.stubGlobal('chrome', { runtime: { getManifest: () => ({ version: '0.3.4' }) } });
+  const tracker = new ProgressTracker(() => undefined);
+  const jobId = randomUUID();
+  tracker.receipt(
+    jobId,
+    'fill',
+    { actionId: 'synthetic', status: 'blocked', reason: 'page_changed', observedHash: null },
+    'Customer-private field label',
+  );
+  const start = tracker.begin('request', jobId);
+  tracker.finish(start, {
+    status: 409,
+    apiReason: 'receipt_conflict',
+    message: 'Customer-private answer',
+  });
+  const report = JSON.parse(tracker.report()) as { events: DiagnosticEvent[] };
+  expect(report.events[0]).toMatchObject({
+    receiptStatus: 'blocked',
+    receiptReason: 'page_changed',
+  });
+  expect(report.events[0]).not.toHaveProperty('targetKey');
+  expect(report.events.at(-1)).toMatchObject({ code: 'conflict', apiReason: 'receipt_conflict' });
+  expect(tracker.report()).not.toContain('Customer-private');
 });

@@ -12,7 +12,7 @@ import './sidepanel.css';
 
 const reviewMessages: Record<FieldReview['reason'], string> = {
   missing_source: 'The trained M.I.A. field has no answer for this quote.',
-  missing_mapping: 'This carrier field has no mapping in the active trained workflow.',
+  missing_mapping: 'This carrier field has no saved mapping in this test or workflow.',
   missing_question_context: 'This field was not recognized in the trained workflow.',
   ambiguous_match: 'More than one trained field could match this carrier control.',
   human_only: 'This control must remain with you.',
@@ -66,12 +66,59 @@ function App() {
       });
     };
     refresh();
-    void jobSession().then((saved) => {
+    const previewReady = (input: unknown, sender: chrome.runtime.MessageSender): void => {
+      if (
+        sender.id !== chrome.runtime.id ||
+        sender.url?.split('?')[0] !== chrome.runtime.getURL('reference.html') ||
+        !input ||
+        typeof input !== 'object' ||
+        !('type' in input) ||
+        input.type !== 'smartmapper-reference-test-ready' ||
+        !('preview' in input) ||
+        typeof input.preview !== 'boolean'
+      )
+        return;
+      const preview = input.preview;
+      void trainingSession().then((training) => {
+        if (!training || (preview && !training.previewPaused)) return;
+        const mapping = preview ? training.previewMapping : training.publishedMapping;
+        if (!mapping) return;
+        setTestableMapping({
+          mappingId: mapping.mappingId,
+          mappingVersion: mapping.mappingVersion,
+          preview,
+          formType: training.training.workflow.lineOfBusiness,
+        });
+        setVerifiedTestMapping(false);
+        lastVerificationRevision.current = null;
+        setError('');
+        setMode('map');
+        setMessage(
+          preview
+            ? 'Reference saved. Select a demo quote to test this page.'
+            : `Testing trained mapping version ${mapping.mappingVersion}. Select a representative demo quote.`,
+        );
+      });
+    };
+    chrome.runtime.onMessage.addListener(previewReady);
+    void jobSession().then(async (saved) => {
       const mappingSelection = saved?.mappingSelection;
-      if (!mappingSelection) return;
+      if (!mappingSelection) {
+        const training = await trainingSession();
+        if (training?.previewPaused && training.previewMapping)
+          setTestableMapping({
+            mappingId: training.previewMapping.mappingId,
+            mappingVersion: training.previewMapping.mappingVersion,
+            preview: true,
+            formType: training.training.workflow.lineOfBusiness,
+          });
+        return;
+      }
       setTestableMapping({
         mappingId: mappingSelection.mappingId,
         mappingVersion: mappingSelection.mappingVersion,
+        ...(mappingSelection.preview === undefined ? {} : { preview: mappingSelection.preview }),
+        ...(mappingSelection.formType === undefined ? {} : { formType: mappingSelection.formType }),
       });
       void trainingSession().then((training) => {
         const publishedMapping = training?.publishedMapping;
@@ -99,6 +146,7 @@ function App() {
     return () => {
       executor.halt();
       chrome.storage.onChanged.removeListener(refresh);
+      chrome.runtime.onMessage.removeListener(previewReady);
       document.removeEventListener('visibilitychange', onHide);
     };
   }, []);
@@ -106,6 +154,7 @@ function App() {
   useEffect(() => {
     if (
       !testableMapping ||
+      testableMapping.preview ||
       verifiedTestMapping ||
       job?.status !== 'page_complete' ||
       job.failed > 0 ||
@@ -161,6 +210,21 @@ function App() {
     }
   }
 
+  async function finishPreview(resumeTraining: boolean): Promise<void> {
+    await controller.current?.pause();
+    const session = await jobSession();
+    if (session?.mappingSelection?.preview) {
+      await new TrainingController().recordPreviewResult(session.job.jobId, session.token);
+      await controller.current?.cancel();
+    }
+    if (resumeTraining) {
+      await new TrainingController().resumeDraft();
+      setTestableMapping(null);
+      setMode('train');
+    }
+    setError('');
+  }
+
   return (
     <main>
       <header>
@@ -184,7 +248,10 @@ function App() {
           className={mode === 'train' ? 'active' : ''}
           aria-current={mode === 'train' ? 'page' : undefined}
           disabled={!!job}
-          onClick={() => setMode('train')}
+          onClick={() => {
+            if (testableMapping?.preview) void perform(() => finishPreview(true));
+            else setMode('train');
+          }}
         >
           Train
         </button>
@@ -252,11 +319,22 @@ function App() {
           }}
           onTestMapping={(mapping) => {
             setTestableMapping(mapping);
+            setError('');
+            if (mapping.formType) {
+              const matching = quotes.filter(
+                (quote) => quote.form_type.trim().toLowerCase() === mapping.formType,
+              );
+              setQuotes(matching);
+              if (!matching.some((quote) => quote.id === selected))
+                setSelected(matching[0]?.id ?? '');
+            }
             setVerifiedTestMapping(false);
             lastVerificationRevision.current = null;
             setMode('map');
             setMessage(
-              `Testing trained mapping version ${mapping.mappingVersion}. Select a representative demo quote.`,
+              mapping.preview
+                ? 'Training paused. Select a demo quote to test this page.'
+                : `Testing trained mapping version ${mapping.mappingVersion}. Select a representative demo quote.`,
             );
           }}
         />
@@ -269,7 +347,10 @@ function App() {
                 event.preventDefault();
                 void perform(async () => {
                   const results = ((await controller.current?.search(query)) ?? []).filter(
-                    (quote) => ['home', 'auto'].includes(quote.form_type.trim().toLowerCase()),
+                    (quote) =>
+                      ['home', 'auto'].includes(quote.form_type.trim().toLowerCase()) &&
+                      (!testableMapping?.formType ||
+                        quote.form_type.trim().toLowerCase() === testableMapping.formType),
                   );
                   setQuotes(results);
                   setSelected(results[0]?.id ?? '');
@@ -308,14 +389,21 @@ function App() {
             )}
             {testableMapping && !job && (
               <div className="testable-notice" role="status">
-                <strong>Test mode: mapping version {testableMapping.mappingVersion}</strong>
+                <strong>
+                  {testableMapping.preview
+                    ? 'Training paused ? test this page'
+                    : `Test mode: mapping version ${testableMapping.mappingVersion}`}
+                </strong>
                 <p>
-                  This run uses the unpublished testable version. It does not replace the active
-                  mapping.
+                  {testableMapping.preview
+                    ? 'Your draft is saved. Test the configured fields, review the result, then Resume training. This test stays on this page.'
+                    : 'This run uses the unpublished testable version. It does not replace the active mapping.'}
                 </p>
-                <button className="link-button" onClick={() => setTestableMapping(null)}>
-                  Use active mapping instead
-                </button>
+                {!testableMapping.preview && (
+                  <button className="link-button" onClick={() => setTestableMapping(null)}>
+                    Use active mapping instead
+                  </button>
+                )}
               </div>
             )}
             {verifiedTestMapping && (
@@ -326,6 +414,23 @@ function App() {
             )}
           </section>
 
+          {testableMapping?.preview && (
+            <section className="preview-controls">
+              <button disabled={working} onClick={() => void perform(() => finishPreview(true))}>
+                Resume training
+              </button>
+              {job && (
+                <button
+                  className="secondary"
+                  disabled={working}
+                  onClick={() => void perform(() => finishPreview(false))}
+                >
+                  Test another demo quote
+                </button>
+              )}
+              <p>Training choices and filled carrier values are preserved when you return.</p>
+            </section>
+          )}
           <MappingStatus progress={progress} job={job} message={message} />
           {(!!job || !!progress.events.length) && (
             <details className="diagnostics">
@@ -382,7 +487,11 @@ function App() {
                   })
                 }
               >
-                {testableMapping ? 'Start test mapping' : 'Start mapping'}
+                {testableMapping?.preview
+                  ? 'Test prefill on this page'
+                  : testableMapping
+                    ? 'Start test mapping'
+                    : 'Start mapping'}
               </button>
             )}
             {job && (

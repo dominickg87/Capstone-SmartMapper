@@ -12,13 +12,16 @@ import { TrainingMarkerSchema, TrainingOverlay } from './training-overlay.js';
 declare global {
   interface Window {
     smartMapperContentV2?: string;
+    smartMapperContentCleanupV2?: () => void;
   }
 }
 const contentVersion = chrome.runtime.getManifest().version;
 if (window.smartMapperContentV2 !== contentVersion) {
+  window.smartMapperContentCleanupV2?.();
   window.smartMapperContentV2 = contentVersion;
   const session = new BrowserPageSession();
-  const trainingOverlay = new TrainingOverlay();
+  const trainingOverlay = new TrainingOverlay((elementId) => session.trainingElement(elementId));
+  window.smartMapperContentCleanupV2 = () => trainingOverlay.clear();
   const cancelledExecutions = new Set<string>();
   const executionPorts = new Map<string, chrome.runtime.Port>();
   let activeExecutionId: string | undefined;

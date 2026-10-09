@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import {
   DiagnosticEventSchema,
+  DiagnosticApiReasonSchema,
   diagnosticCode,
   type DiagnosticCounts,
   type DiagnosticEvent,
@@ -59,10 +60,18 @@ export class JobDiagnostics {
     elapsedMs = 0,
     counts?: DiagnosticCounts,
     error?: unknown,
-    context?: Pick<DiagnosticEvent, 'targetKey' | 'actionType' | 'receiptStatus' | 'receiptReason'>,
+    context?: Pick<
+      DiagnosticEvent,
+      'targetKey' | 'actionType' | 'receiptStatus' | 'receiptReason' | 'reviewReasons'
+    >,
   ): void {
     const trace = this.current();
     if (!trace) return;
+    const detail =
+      error instanceof Error
+        ? (error as Error & { clientRevision?: number; serverRevision?: number })
+        : undefined;
+    const reason = DiagnosticApiReasonSchema.safeParse(detail?.message);
     const event = DiagnosticEventSchema.parse({
       id: randomUUID(),
       requestId: trace.requestId,
@@ -74,6 +83,13 @@ export class JobDiagnostics {
       elapsedMs: Math.max(0, Math.round(elapsedMs)),
       ...(counts ? { counts } : {}),
       ...(error !== undefined ? { code: diagnosticCode(error) } : {}),
+      ...(reason.success
+        ? {
+            apiReason: reason.data,
+            clientRevision: detail?.clientRevision,
+            serverRevision: detail?.serverRevision,
+          }
+        : {}),
       ...context,
     });
     if (event.jobId) {

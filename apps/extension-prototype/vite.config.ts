@@ -85,6 +85,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           sidepanel: resolve(import.meta.dirname, 'sidepanel.html'),
+          reference: resolve(import.meta.dirname, 'reference.html'),
           background: resolve(import.meta.dirname, 'src/background.ts'),
           'auth-content': resolve(import.meta.dirname, 'src/auth-content.ts'),
         },

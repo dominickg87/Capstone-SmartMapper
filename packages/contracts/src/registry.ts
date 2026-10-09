@@ -287,6 +287,7 @@ export type MappingDisposition = z.infer<typeof MappingDispositionSchema>;
 // Values, checked state and validation text are intentionally excluded. Training and published
 // mappings retain carrier structure, never quote/customer values.
 export const TrainingControlSnapshotSchema = PageControlSchema.pick({
+  locatorHints: true,
   elementId: true,
   key: true,
   tag: true,
@@ -304,6 +305,14 @@ export const TrainingControlSnapshotSchema = PageControlSchema.pick({
   rect: true,
 })
   .extend({
+    reference: z
+      .object({
+        label: z.string().max(240),
+        section: z.string().max(240),
+        options: z.array(z.string().max(240)).max(300),
+      })
+      .strict()
+      .optional(),
     // Radio option identity is structural; checked state and every other current value are omitted.
     choiceValue: z.string().max(2000).nullable(),
     // These coarse classifications are derived in the extension before carrier text is hashed.
@@ -324,6 +333,7 @@ export type TrainingControlSnapshot = z.infer<typeof TrainingControlSnapshotSche
 export const TrainingFieldSchema = z
   .object({
     fieldId: z.string().uuid(),
+    logicalFieldId: z.string().uuid().optional(),
     sequence: z.number().int().positive(),
     occurrence: z.number().int().nonnegative(),
     repeatIndex: z.number().int().nonnegative().nullable(),
@@ -338,6 +348,7 @@ export type TrainingField = z.infer<typeof TrainingFieldSchema>;
 export const TrainingWorkflowControlSchema = z
   .object({
     workflowControlId: z.string().uuid(),
+    logicalFieldId: z.string().uuid().optional(),
     sequence: z.number().int().positive(),
     kind: z.enum(['ordinary_next', 'add_entity']),
     entityType: z.enum(['applicant', 'additionalDriver', 'vehicle']).nullable(),
@@ -393,6 +404,22 @@ export const TrainingSessionViewSchema = z
     catalogRevision: id,
     pages: z.array(TrainingPageSchema).max(100),
     mappingId: z.string().uuid().nullable(),
+    previewResults: z
+      .array(
+        z
+          .object({
+            mappingId: z.string().uuid(),
+            pageId: z.string().uuid(),
+            draftRevision: z.number().int().nonnegative(),
+            verified: z.number().int().nonnegative(),
+            failed: z.number().int().nonnegative(),
+            reviews: z.number().int().nonnegative(),
+            recordedAt: z.iso.datetime(),
+          })
+          .strict(),
+      )
+      .max(100)
+      .optional(),
   })
   .strict();
 export type TrainingSessionView = z.infer<typeof TrainingSessionViewSchema>;
@@ -423,6 +450,7 @@ export type StableTargetLocator = z.infer<typeof StableTargetLocatorSchema>;
 export const MappingFieldSchema = z
   .object({
     fieldId: z.string().uuid(),
+    logicalFieldId: z.string().uuid().optional(),
     sequence: z.number().int().positive(),
     target: StableTargetLocatorSchema,
     disposition: MappingDispositionSchema,
@@ -433,6 +461,7 @@ export type MappingField = z.infer<typeof MappingFieldSchema>;
 export const MappingWorkflowControlSchema = z
   .object({
     workflowControlId: z.string().uuid(),
+    logicalFieldId: z.string().uuid().optional(),
     sequence: z.number().int().positive(),
     kind: z.enum(['ordinary_next', 'add_entity']),
     entityType: z.enum(['applicant', 'additionalDriver', 'vehicle']).nullable(),
@@ -459,7 +488,16 @@ export const MappingProfileSchema = z
     version: z.literal('2.0'),
     mappingId: z.string().uuid(),
     mappingVersion: z.number().int().positive(),
-    status: z.enum(['testable', 'verified', 'active', 'superseded', 'archived']),
+    status: z.enum(['preview', 'testable', 'verified', 'active', 'superseded', 'archived']),
+    preview: z
+      .object({
+        trainingId: z.string().uuid(),
+        revision: z.number().int().nonnegative(),
+        pageId: z.string().uuid(),
+        tabId: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
     tenantId: id,
     createdByUserId: id,
     workflow: CarrierWorkflowIdentitySchema,
@@ -514,7 +552,16 @@ export const CaptureTrainingPageRequestSchema = z
   .object({
     revision: z.number().int().nonnegative(),
     observation: TrainingPageObservationSchema,
+    discover: z.boolean().optional(),
+    fromPageId: z.string().uuid().optional(),
     scenarioLabel: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+
+export const PreviewTrainingPageRequestSchema = z
+  .object({
+    revision: z.number().int().nonnegative(),
+    pageId: z.string().uuid(),
   })
   .strict();
 
@@ -527,7 +574,7 @@ export const SaveTrainingPageRequestSchema = z
         z
           .object({
             fieldId: z.string().uuid(),
-            disposition: MappingDispositionSchema,
+            disposition: MappingDispositionSchema.nullable(),
             repeatBinding: z
               .object({
                 entityType: CatalogEntityTypeSchema,
@@ -545,7 +592,7 @@ export const SaveTrainingPageRequestSchema = z
         z
           .object({
             workflowControlId: z.string().uuid(),
-            decision: z.enum(['use', 'ignore']),
+            decision: z.enum(['use', 'ignore']).nullable(),
           })
           .strict(),
       )

@@ -1,5 +1,11 @@
 import { carrierOriginAllowed } from '@smartmapper/automation-core/active-tab';
-import { stablePageSignature, stableTargetSignature } from '@smartmapper/automation-core/registry';
+import {
+  capturedPageSignatureMatches,
+  stableTargetSignature,
+  stableLocator,
+  stablePageSignature,
+  resolveTrainedControl,
+} from '@smartmapper/automation-core/registry';
 import {
   ActivateMappingResponseSchema,
   CaptureTrainingPageRequestSchema,
@@ -33,6 +39,11 @@ const TrainingBrowserSessionSchema = z
     token: z.string().min(1),
     catalog: z.custom<MiaFieldCatalog>(),
     publishedMapping: MappingProfileSchema.optional(),
+    previewMapping: MappingProfileSchema.optional(),
+    previewPaused: z.boolean().optional(),
+    recording: z.boolean().optional(),
+    recordedStates: z.array(z.string()).max(100).optional(),
+    activePageId: z.string().uuid().optional(),
     windowId: z.number().int(),
   })
   .strict();
@@ -49,6 +60,7 @@ class TrainingApiError extends Error {
   public constructor(
     public readonly status: number,
     message: string,
+    public readonly code?: string,
   ) {
     super(message);
   }
@@ -128,6 +140,7 @@ async function json(
                   ? 'This mapping test still has missing or failed fields. Resolve them before activation.'
                   : serverMessage || 'Complete every captured carrier field before publishing.'
               : serverMessage || 'The training service could not complete this request.',
+      code,
     );
   }
   return (await response.json()) as unknown;
@@ -199,7 +212,18 @@ export async function trainingMarkersFor(
   const structure = await structuralTrainingObservation(observation);
   if (
     structure.routeId !== page.routeId ||
-    (await stablePageSignature(structure)) !== page.signature
+    !(await capturedPageSignatureMatches(
+      structure,
+      page.signature,
+      await Promise.all(
+        page.fields.map(async (field) => ({
+          signature: await stableTargetSignature(field.control),
+          occurrence: field.occurrence,
+          humanOnly: field.control.humanOnly,
+          options: field.control.options,
+        })),
+      ),
+    ))
   )
     return [];
   // DOM identifiers and rectangles belong to an observation, never to a saved workflow. Resolve
@@ -221,9 +245,17 @@ export async function trainingMarkersFor(
   }
   const resolved = new Map<string, PageObservation['controls'][number]>();
   for (const field of page.fields) {
-    const candidate = liveBySignature.get(await stableTargetSignature(field.control))?.[
-      field.occurrence
-    ];
+    const candidate = await resolveTrainedControl(
+      await stableLocator(
+        field.control,
+        field.occurrence,
+        field.repeatIndex,
+        field.groupKey,
+        field.repeatEntityType,
+      ),
+      observation,
+      liveBySignature,
+    );
     if (candidate && !candidate.disabled) resolved.set(field.fieldId, candidate);
   }
   for (const control of page.workflowControls) {
@@ -261,6 +293,129 @@ export async function trainingMarkersFor(
 }
 
 export class TrainingController {
+  private lastRecordingState = '';
+  private lastCapturedState = '';
+  private recordingTask: Promise<TrainingBrowserSession | null> | null = null;
+  private recordingStopRequested = false;
+
+  public async setRecording(recording: boolean): Promise<TrainingBrowserSession> {
+    this.recordingStopRequested = !recording;
+    if (!recording) await this.recordingTask?.catch(() => undefined);
+    const session = await trainingSession();
+    if (!session || session.training.status !== 'draft')
+      throw new Error('Open an editable training draft first.');
+    if (recording) await activeCarrierTab(session);
+    const next = { ...session, recording };
+    await saveTrainingSession(next);
+    if (recording) await this.clearOverlay();
+    return next;
+  }
+
+  /** Passive, bounded capture: no clicks, field writes, navigation or customer values. */
+  public recordPage(): Promise<TrainingBrowserSession | null> {
+    if (this.recordingStopRequested) return Promise.resolve(null);
+    this.recordingTask ??= this.scanRecordingPage().finally(() => {
+      this.recordingTask = null;
+    });
+    return this.recordingTask;
+  }
+
+  public discoverPage(beforeCapture: () => boolean): Promise<TrainingBrowserSession | null> {
+    this.recordingTask ??= this.scanRecordingPage(beforeCapture).finally(() => {
+      this.recordingTask = null;
+    });
+    return this.recordingTask;
+  }
+
+  private async scanRecordingPage(
+    beforeCapture?: () => boolean,
+  ): Promise<TrainingBrowserSession | null> {
+    const session = await trainingSession();
+    if (
+      !session ||
+      session.training.status !== 'draft' ||
+      session.previewPaused ||
+      (!beforeCapture && !session.recording)
+    )
+      return null;
+    const tab = await activeCarrierTab(session);
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, frameIds: [0] },
+      files: ['content.js'],
+    });
+    const observation = PageObservationSchema.parse(
+      await chrome.tabs.sendMessage(tab.id, { type: 'training-observe', tabId: tab.id }),
+    );
+    if (observation.authenticationRequired)
+      throw new Error('Recording paused at sign-in. Sign in yourself, then continue recording.');
+    if (
+      !observation.controls.some((control) => ['input', 'select', 'textarea'].includes(control.tag))
+    )
+      return null;
+    const structure = await structuralTrainingObservation(observation);
+    const state = await crypto.subtle.digest(
+      'SHA-256',
+      new TextEncoder().encode(
+        JSON.stringify({
+          route: observation.routeId,
+          shape: await stablePageSignature(structure),
+          targets: await Promise.all(
+            structure.controls.map(async (control) => ({
+              signature: await stableTargetSignature(control),
+              locatorHints: control.locatorHints,
+              humanOnly: control.humanOnly,
+              operationalTarget: control.operationalTarget,
+              choiceValue: control.choiceValue,
+              options: control.options,
+            })),
+          ),
+        }),
+      ),
+    );
+    const key = Array.from(new Uint8Array(state), (byte) =>
+      byte.toString(16).padStart(2, '0'),
+    ).join('');
+    const previous = this.lastRecordingState;
+    this.lastRecordingState = key;
+    const appliedKey = `${session.training.trainingId}:${key}`;
+    if (previous !== key || this.lastCapturedState === appliedKey) return null;
+    if (beforeCapture && !beforeCapture()) return null;
+    const latest = await trainingSession();
+    if (
+      !latest ||
+      latest.training.trainingId !== session.training.trainingId ||
+      latest.previewPaused ||
+      latest.training.status !== 'draft'
+    )
+      return null;
+    const captured = await this.captureObservation(
+      latest,
+      observation,
+      latest.recording ? 'record' : 'discover',
+    );
+    this.lastCapturedState = appliedKey;
+    return captured;
+  }
+
+  public async openReference(): Promise<void> {
+    const session = await trainingSession();
+    if (!session) throw new Error('Record or capture a page first.');
+    await chrome.tabs.create({
+      url: chrome.runtime.getURL(`reference.html?tabId=${session.training.binding.tabId}`),
+    });
+  }
+
+  public async returnToCarrier(): Promise<void> {
+    const session = await trainingSession();
+    if (!session) throw new Error('Open a saved training draft first.');
+    const tab = await chrome.tabs.get(session.training.binding.tabId).catch(() => null);
+    if (!tab?.url || new URL(tab.url).origin !== session.training.binding.carrierOrigin)
+      throw new Error(
+        'The recorded carrier tab is closed or changed. Reopen the carrier, then use Find saved training and mappings in its side panel.',
+      );
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(session.training.binding.tabId, { active: true });
+  }
   public async carrierIdentity(): Promise<{ carrierOrigin: string; carrierBaseUrl: string }> {
     const tab = await activeCarrierTab();
     const url = new URL(tab.url);
@@ -299,7 +454,9 @@ export class TrainingController {
     }
     const next = { ...session, training: response.training };
     await saveTrainingSession(next);
-    const current = next.training.pages.at(-1);
+    const current =
+      next.training.pages.find((page) => page.pageId === next.activePageId) ??
+      next.training.pages.at(-1);
     if (current) await this.showPage(current).catch(() => undefined);
     return next;
   }
@@ -435,6 +592,33 @@ export class TrainingController {
     return next;
   }
 
+  public async editSavedMapping(
+    mappingId: string,
+    mappingVersion: number,
+    formType: MappingLineOfBusiness,
+  ): Promise<TrainingBrowserSession> {
+    const fresh = await this.authorize(formType);
+    const response = TrainingSessionResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${fresh.training.trainingId}/edit`,
+        fresh.token,
+        'POST',
+        { revision: fresh.training.revision, mappingId, mappingVersion },
+      ),
+    );
+    const next: TrainingBrowserSession = { ...fresh, training: response.training };
+    await saveTrainingSession(next);
+    for (const page of next.training.pages) {
+      if (await this.showPage(page).catch(() => false)) {
+        next.activePageId = page.pageId;
+        await saveTrainingSession(next);
+        break;
+      }
+    }
+    return next;
+  }
+
   public async capture(
     kind: 'main' | 'page' | 'scenario' = 'page',
   ): Promise<TrainingBrowserSession> {
@@ -454,9 +638,19 @@ export class TrainingController {
         targeted: true,
       }),
     );
+    return this.captureObservation(session, observation, kind);
+  }
+
+  private async captureObservation(
+    session: TrainingBrowserSession,
+    observation: PageObservation,
+    kind: 'main' | 'page' | 'scenario' | 'record' | 'discover',
+  ): Promise<TrainingBrowserSession> {
     const body = CaptureTrainingPageRequestSchema.parse({
       revision: session.training.revision,
       observation: await structuralTrainingObservation(observation),
+      discover: kind !== 'main',
+      ...(session.activePageId ? { fromPageId: session.activePageId } : {}),
       scenarioLabel:
         kind === 'main'
           ? 'Main path'
@@ -473,9 +667,9 @@ export class TrainingController {
         body,
       ),
     );
-    const next = { ...session, training: response.training };
+    const next = { ...session, training: response.training, activePageId: response.page.pageId };
     await saveTrainingSession(next);
-    await this.showPage(response.page).catch(() => undefined);
+    if (kind !== 'record') await this.showPage(response.page).catch(() => undefined);
     return next;
   }
 
@@ -483,7 +677,7 @@ export class TrainingController {
     pageId: string,
     fields: Array<{
       fieldId: string;
-      disposition: MappingDisposition;
+      disposition: MappingDisposition | null;
       repeatBinding?: {
         entityType: 'applicant' | 'additionalDriver' | 'vehicle';
         index: number;
@@ -491,7 +685,7 @@ export class TrainingController {
     }>,
     workflowControls: Array<{
       workflowControlId: string;
-      decision: 'use' | 'ignore';
+      decision: 'use' | 'ignore' | null;
     }>,
   ): Promise<TrainingBrowserSession> {
     const session = await trainingSession();
@@ -510,9 +704,61 @@ export class TrainingController {
         body,
       ),
     );
-    const next = { ...session, training: response.training };
+    const next = { ...session, training: response.training, activePageId: pageId };
     await saveTrainingSession(next);
     await this.showPage(response.page).catch(() => undefined);
+    return next;
+  }
+
+  public async resumeDraft(): Promise<void> {
+    const session = await trainingSession();
+    if (session) await saveTrainingSession({ ...session, previewPaused: false });
+  }
+
+  public async recordPreviewResult(jobId: string, jobToken: string): Promise<void> {
+    const session = await trainingSession();
+    if (!session?.previewMapping) return;
+    const response = TrainingSessionResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${session.training.trainingId}/preview-result`,
+        session.token,
+        'POST',
+        {
+          revision: session.training.revision,
+          mappingVersion: session.previewMapping.mappingVersion,
+          jobId,
+          jobToken,
+        },
+      ),
+    );
+    await saveTrainingSession({ ...session, training: response.training });
+  }
+
+  public async preview(pageId: string): Promise<TrainingBrowserSession> {
+    const session = await trainingSession();
+    const page = session?.training.pages.find((item) => item.pageId === pageId);
+    if (!session || !page) throw new Error('Capture this page before testing.');
+    if (!(await this.showPage(page)))
+      throw new Error('Open the captured carrier page you want to test, then try again.');
+    const response = PublishTrainingSessionResponseSchema.parse(
+      await json(
+        config.backendOrigin,
+        `/v2/training/sessions/${session.training.trainingId}/preview`,
+        session.token,
+        'POST',
+        { revision: session.training.revision, pageId },
+      ),
+    );
+    const next = {
+      ...session,
+      training: response.training,
+      previewMapping: response.mapping,
+      previewPaused: true,
+      activePageId: pageId,
+    };
+    await saveTrainingSession(next);
+    await this.clearOverlay();
     return next;
   }
 

@@ -84,7 +84,9 @@ export function carrierFieldMetadata(field: TrainingField): string {
   const choices = field.control.options.length
     ? ` · ${field.control.options.length} choice${field.control.options.length === 1 ? '' : 's'}`
     : '';
-  const section = carrierDisplayText(field.control.section, 'Private carrier section');
+  const section =
+    field.control.reference?.section ||
+    carrierDisplayText(field.control.section, 'Carrier section');
   return `${[section, logicalType].filter(Boolean).join(' · ')}${choices}${
     field.control.required ? ' · required' : ' · optional'
   }`;

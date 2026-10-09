@@ -12,6 +12,7 @@ import {
 import { catalogFieldLabel, groupCatalogFields } from './mia-catalog.js';
 import {
   TrainingController,
+  trainingSession,
   type TrainingBrowserSession,
   type TrainingLibrary,
 } from './training-controller.js';
@@ -27,7 +28,7 @@ import {
 } from './training-view.js';
 
 type SourceDisposition = Extract<MappingDisposition, { kind: 'source' }>;
-type TestableMapping = { mappingId: string; mappingVersion: number };
+import type { TestableMapping } from './controller.js';
 type RepeatBinding = {
   entityType: 'applicant' | 'additionalDriver' | 'vehicle';
   index: number;
@@ -226,7 +227,8 @@ function TransformEditor({
               >
                 {carrierField.control.options.map((option, index) => (
                   <option key={option.value} value={option.value}>
-                    {carrierOptionDisplay(option.label, index)}
+                    {carrierField.control.reference?.options[index] ||
+                      carrierOptionDisplay(option.label, index)}
                   </option>
                 ))}
               </select>
@@ -246,7 +248,8 @@ function TransformEditor({
               >
                 {carrierField.control.options.map((option, index) => (
                   <option key={option.value} value={option.value}>
-                    {carrierOptionDisplay(option.label, index)}
+                    {carrierField.control.reference?.options[index] ||
+                      carrierOptionDisplay(option.label, index)}
                   </option>
                 ))}
               </select>
@@ -279,7 +282,8 @@ function TransformEditor({
                 ) && <option value={String(item.target)}>{String(item.target)}</option>}
                 {carrierField.control.options.map((option, optionIndex) => (
                   <option key={String(option.value)} value={String(option.value)}>
-                    {carrierOptionDisplay(option.label, optionIndex)}
+                    {carrierField.control.reference?.options[optionIndex] ||
+                      carrierOptionDisplay(option.label, optionIndex)}
                   </option>
                 ))}
               </select>
@@ -660,10 +664,12 @@ export function TrainingPanel({
   connected,
   onTestMapping,
   onTrainingResolved,
+  studio = false,
 }: {
   connected: boolean;
   onTestMapping: (mapping: TestableMapping) => void;
   onTrainingResolved: () => void;
+  studio?: boolean;
 }) {
   const controller = useRef(new TrainingController());
   const [session, setSession] = useState<TrainingBrowserSession | null>(null);
@@ -683,9 +689,18 @@ export function TrainingPanel({
   const [message, setMessage] = useState('Open a carrier quote page to begin training.');
   const [error, setError] = useState('');
   const editGeneration = useRef(0);
+  const recordingBusy = useRef(false);
+  const editorState = useRef({ dirty: false, saving: false, working: false });
+  const [autoDiscover, setAutoDiscover] = useState(true);
+  const [fieldFilter, setFieldFilter] = useState('');
+
+  useEffect(() => {
+    editorState.current = { dirty, saving, working };
+  }, [dirty, saving, working]);
 
   const activePage = session?.training.pages.find((page) => page.pageId === activePageId);
-  const locked = session?.training.status !== 'draft' || !boundToTab;
+  const locked =
+    session?.training.status !== 'draft' || (!studio && !boundToTab) || !!session?.recording;
 
   const loadPage = useCallback((page: TrainingPage | undefined): void => {
     if (!page) {
@@ -729,13 +744,18 @@ export function TrainingPanel({
           setLineOfBusiness(restored.training.workflow.lineOfBusiness);
           setCarrierOrigin(restored.training.workflow.carrierOrigin);
           setCarrierBaseUrl(restored.training.workflow.carrierBaseUrl);
-          loadPage(restored.training.pages.at(-1));
+          loadPage(
+            restored.training.pages.find((page) => page.pageId === restored.activePageId) ??
+              restored.training.pages.at(-1),
+          );
           void controller.current.boundToCurrentTab(restored).then((bound) => {
             setBoundToTab(bound);
             setMessage(
-              bound
-                ? 'Saved training restored. Continue where you left off.'
-                : 'Your saved work belongs to a previous tab. Use Find saved training and mappings below to reopen it in this tab.',
+              studio
+                ? 'Review your captured fields below. Changes save automatically; live tests run in the recorded carrier tab.'
+                : bound
+                  ? 'Saved training restored. Continue where you left off.'
+                  : 'Your saved work belongs to a previous tab. Use Find saved training and mappings below to reopen it in this tab.',
             );
           });
         } else {
@@ -759,7 +779,98 @@ export function TrainingPanel({
           })
           .catch(() => undefined);
       });
-  }, [loadPage]);
+  }, [loadPage, studio]);
+
+  useEffect(() => {
+    const refresh = (): void => {
+      if (dirty || saving || working || document.visibilityState === 'hidden') return;
+      void trainingSession().then((latest) => {
+        if (latest && latest.training.revision !== session?.training.revision) {
+          setSession(latest);
+          loadPage(
+            latest.training.pages.find((page) => page.pageId === activePageId) ??
+              latest.training.pages.at(-1),
+          );
+        }
+      });
+    };
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
+  }, [activePageId, dirty, loadPage, saving, session?.training.revision, working]);
+
+  useEffect(() => {
+    if (
+      studio ||
+      !boundToTab ||
+      session?.training.status !== 'draft' ||
+      session.previewPaused ||
+      (!session.recording && (!autoDiscover || !session.training.pages.length))
+    )
+      return;
+    let active = true;
+    const timer = setInterval(() => {
+      if (
+        recordingBusy.current ||
+        document.visibilityState === 'hidden' ||
+        Object.values(editorState.current).some(Boolean)
+      )
+        return;
+      recordingBusy.current = true;
+      let capturing = false;
+      void controller.current
+        .discoverPage(() => {
+          if (
+            !active ||
+            document.visibilityState === 'hidden' ||
+            Object.values(editorState.current).some(Boolean)
+          )
+            return false;
+          capturing = true;
+          editorState.current.working = true;
+          setWorking(true);
+          return true;
+        })
+        .then((captured) => {
+          if (!captured) return;
+          setSession(captured);
+          loadPage(captured.training.pages.find((page) => page.pageId === captured.activePageId));
+          setMessage(
+            captured.recording
+              ? `${captured.training.pages.length} page states saved. Continue through the carrier and reveal any conditional fields.`
+              : 'Current fields numbered. Existing numbers and mappings are preserved; new fields use the next available numbers.',
+          );
+        })
+        .catch(async (failure: unknown) => {
+          setError(
+            failure instanceof Error
+              ? failure.message
+              : 'Field discovery paused. Return to the carrier and enable automatic numbering again.',
+          );
+          setAutoDiscover(false);
+          if (session.recording) setSession(await controller.current.setRecording(false));
+        })
+        .finally(() => {
+          recordingBusy.current = false;
+          if (capturing) {
+            editorState.current.working = false;
+            setWorking(false);
+          }
+        });
+    }, 1200);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [
+    autoDiscover,
+    boundToTab,
+    loadPage,
+    session?.recording,
+    session?.previewPaused,
+    session?.training.status,
+    session?.training.pages.length,
+    studio,
+  ]);
 
   useEffect(() => {
     const listener = (input: unknown): void => {
@@ -785,18 +896,23 @@ export function TrainingPanel({
   const persist = useCallback(async (): Promise<TrainingBrowserSession | null> => {
     if (!session || !activePage || !dirty || locked) return session;
     const generation = editGeneration.current;
+    editorState.current.saving = true;
     setSaving(true);
     try {
       const saved = await controller.current.savePage(
         activePage.pageId,
-        Object.entries(drafts).flatMap(([fieldId, disposition]) =>
-          disposition
-            ? [{ fieldId, disposition, repeatBinding: repeatDrafts[fieldId] ?? null }]
-            : [],
-        ),
-        Object.entries(workflowDrafts).flatMap(([workflowControlId, decision]) =>
-          decision ? [{ workflowControlId, decision }] : [],
-        ),
+        Object.entries(drafts).map(([fieldId, disposition]) => {
+          const original = activePage.fields.find((field) => field.fieldId === fieldId)!;
+          const binding = repeatDrafts[fieldId] ?? null;
+          const changed =
+            original.repeatIndex !== (binding?.index ?? null) ||
+            original.repeatEntityType !== (binding?.entityType ?? null);
+          return { fieldId, disposition, ...(changed ? { repeatBinding: binding } : {}) };
+        }),
+        Object.entries(workflowDrafts).map(([workflowControlId, decision]) => ({
+          workflowControlId,
+          decision,
+        })),
       );
       setSession(saved);
       if (generation === editGeneration.current) setDirty(false);
@@ -805,6 +921,7 @@ export function TrainingPanel({
       setError(failure instanceof Error ? failure.message : 'Could not save this training page.');
       return null;
     } finally {
+      editorState.current.saving = false;
       setSaving(false);
     }
   }, [activePage, dirty, drafts, locked, repeatDrafts, session, workflowDrafts]);
@@ -815,7 +932,29 @@ export function TrainingPanel({
     return () => clearTimeout(timer);
   }, [dirty, locked, persist, saving, working]);
 
+  const editSavedMapping = async (
+    mapping: NonNullable<TrainingBrowserSession['publishedMapping']>,
+  ): Promise<void> => {
+    const edited = await controller.current.editSavedMapping(
+      mapping.mappingId,
+      mapping.mappingVersion,
+      mapping.workflow.lineOfBusiness,
+    );
+    setSession(edited);
+    setBoundToTab(true);
+    setLibrary(null);
+    onTrainingResolved();
+    loadPage(
+      edited.training.pages.find((page) => page.pageId === edited.activePageId) ??
+        edited.training.pages[0],
+    );
+    setMessage(
+      'Saved mappings copied into an editable draft. Continue training or test this page.',
+    );
+  };
+
   const perform = async (operation: () => Promise<void>): Promise<void> => {
+    editorState.current.working = true;
     setWorking(true);
     setError('');
     try {
@@ -826,17 +965,20 @@ export function TrainingPanel({
         failure instanceof Error ? failure.message : 'Training could not complete this step.',
       );
     } finally {
+      editorState.current.working = false;
       setWorking(false);
     }
   };
 
   const updateDisposition = (fieldId: string, disposition: MappingDisposition | null): void => {
+    editorState.current.dirty = true;
     editGeneration.current += 1;
     setDrafts((current) => ({ ...current, [fieldId]: disposition }));
     setDirty(true);
   };
 
   const updateRepeatBinding = (fieldId: string, repeatBinding: RepeatBinding | null): void => {
+    editorState.current.dirty = true;
     editGeneration.current += 1;
     setRepeatDrafts((current) => ({ ...current, [fieldId]: repeatBinding }));
     setDirty(true);
@@ -874,7 +1016,7 @@ export function TrainingPanel({
     ) ?? 0;
 
   return (
-    <div className="training-panel">
+    <div className={`training-panel${studio ? ' reference-editor' : ''}`}>
       <section className="saved-training">
         <h2>Saved training and mappings</h2>
         <p>Reopen work saved for this carrier, including work from a closed tab.</p>
@@ -969,6 +1111,13 @@ export function TrainingPanel({
                 >
                   Open saved mapping for testing
                 </button>
+                <button
+                  className="secondary"
+                  disabled={working || saving || dirty}
+                  onClick={() => void perform(() => editSavedMapping(mapping))}
+                >
+                  Continue training this mapping
+                </button>
               </div>
             ))}
             {!library.drafts.length && !library.mappings.length && (
@@ -1036,6 +1185,30 @@ export function TrainingPanel({
           >
             {working ? 'Starting training…' : 'Start training and capture this page'}
           </button>
+          {!studio && (
+            <button
+              className="record-workflow"
+              disabled={!connected || working || !carrierBaseUrl}
+              onClick={() =>
+                void perform(async () => {
+                  const started = await controller.current.start(
+                    lineOfBusiness,
+                    undefined,
+                    carrierBaseUrl,
+                  );
+                  setSession(started);
+                  setBoundToTab(true);
+                  setLibrary(null);
+                  setSession(await controller.current.setRecording(true));
+                  setMessage(
+                    'Recording is on. Walk through the quote and reveal the fields you want to train.',
+                  );
+                })
+              }
+            >
+              Record carrier workflow
+            </button>
+          )}
         </section>
       )}
 
@@ -1062,21 +1235,110 @@ export function TrainingPanel({
                   : `${session.training.status === 'draft' ? 'Draft' : 'Training session'} saved · revision ${session.training.revision}`}
             </p>
             <p>{message}</p>
+            {session.training.status === 'draft' && !studio && (
+              <div className="recording-toolbar">
+                {session.recording ? (
+                  <>
+                    <p className="recording-status">
+                      <span className="recording-dot" /> Recording page structure
+                    </p>
+                    <p>
+                      Keep this panel open as you navigate. Pause on each new page or conditional
+                      section for a few seconds.
+                    </p>
+                    <button
+                      disabled={working}
+                      onClick={() =>
+                        void perform(async () => {
+                          setSession(await controller.current.setRecording(false));
+                          await controller.current.openReference();
+                        })
+                      }
+                    >
+                      Stop recording & annotate
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <label className="auto-discovery-toggle">
+                      <input
+                        type="checkbox"
+                        checked={autoDiscover}
+                        disabled={working}
+                        onChange={(event) => {
+                          setAutoDiscover(event.target.checked);
+                          setError('');
+                        }}
+                      />
+                      Automatically number new fields
+                    </label>
+                    <p>
+                      Keep Train open. Reveal a section or go to the next page; new fields appear
+                      here automatically.
+                    </p>
+                    <button
+                      className="secondary"
+                      disabled={working || saving || dirty || !boundToTab}
+                      onClick={() =>
+                        void perform(async () => {
+                          setSession(await controller.current.setRecording(true));
+                        })
+                      }
+                    >
+                      Continue recording
+                    </button>
+                    <button
+                      disabled={working || saving || dirty || !session.training.pages.length}
+                      onClick={() => void perform(() => controller.current.openReference())}
+                    >
+                      Open field reference
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
           </section>
 
-          {!!session.training.pages.length && (
+          {studio && (
+            <aside className="reference-pages" aria-label="Recorded pages">
+              <div className="eyebrow">WORKFLOW REFERENCE</div>
+              <h2>Pages & scenarios</h2>
+              {session.training.pages.map((page) => (
+                <button
+                  className={activePageId === page.pageId ? 'selected' : ''}
+                  key={page.pageId}
+                  disabled={working || saving}
+                  onClick={() =>
+                    void perform(async () => {
+                      if (dirty && !(await persist())) return;
+                      loadPage(page);
+                    })
+                  }
+                >
+                  <span>Page {page.sequence}</span>
+                  <small>
+                    {page.fields.length} fields ·{' '}
+                    {page.fields.filter((field) => field.disposition).length} assigned
+                  </small>
+                </button>
+              ))}
+              <p>Only visited pages and revealed scenarios are recorded.</p>
+            </aside>
+          )}
+
+          {!!session.training.pages.length && !studio && (
             <section>
               <label htmlFor="training-page">Captured page or scenario</label>
               <select
                 id="training-page"
                 value={activePageId}
-                disabled={working || saving || !boundToTab}
+                disabled={working || saving || dirty || (!studio && !boundToTab)}
                 onChange={(event) => {
                   const next = session.training.pages.find(
                     (page) => page.pageId === event.target.value,
                   );
                   loadPage(next);
-                  if (next)
+                  if (next && !studio)
                     void perform(async () => {
                       await controller.current.showPage(next);
                     });
@@ -1097,81 +1359,139 @@ export function TrainingPanel({
             </section>
           )}
 
-          {activePage && (
+          {activePage && !session.recording && (
             <section className="training-fields">
               <div className="section-heading">
                 <div>
                   <h2>Carrier fields</h2>
                   <p>
-                    {currentUnmapped} missing on this page. Click a numbered badge here or on the
-                    carrier page.
+                    {currentUnmapped} missing on this page.{' '}
+                    {studio
+                      ? 'Choose a M.I.A. source or disposition for each field.'
+                      : 'Click a numbered badge here or on the carrier page.'}
                   </p>
                 </div>
-                <button
-                  className="secondary compact"
-                  disabled={working || !boundToTab}
-                  onClick={() =>
-                    void perform(async () => {
-                      await controller.current.showPage(activePage);
-                    })
-                  }
-                >
-                  Show numbers
-                </button>
+                {!studio && (
+                  <button
+                    className="secondary compact"
+                    disabled={working || !boundToTab || studio}
+                    onClick={() =>
+                      void perform(async () => {
+                        await controller.current.showPage(activePage);
+                      })
+                    }
+                  >
+                    Show numbers
+                  </button>
+                )}
               </div>
+              {studio && (
+                <input
+                  className="reference-search"
+                  aria-label="Filter captured fields"
+                  placeholder="Find a carrier question or field number…"
+                  value={fieldFilter}
+                  onChange={(event) => setFieldFilter(event.target.value)}
+                />
+              )}
               <ol className="field-list">
-                {activePage.fields.map((field) => {
-                  const value = drafts[field.fieldId] ?? null;
-                  const ready = dispositionReady(field, value, repeatDrafts[field.fieldId]);
-                  const active = field.fieldId === activeFieldId;
-                  return (
-                    <li
-                      id={`training-field-${field.fieldId}`}
-                      className={`training-field ${ready ? 'assigned' : 'unmapped'}${active ? ' active' : ''}`}
-                      key={field.fieldId}
-                    >
-                      <button
-                        type="button"
-                        className="field-heading"
-                        aria-expanded={active}
-                        onClick={() => {
-                          setActiveFieldId(active ? '' : field.fieldId);
-                          if (boundToTab)
-                            void perform(async () => {
-                              await controller.current.focus(field.fieldId);
-                            });
-                        }}
+                {activePage.fields
+                  .filter(
+                    (field) =>
+                      !fieldFilter ||
+                      `${field.sequence} ${field.control.reference?.label ?? ''} ${field.control.reference?.section ?? ''}`
+                        .toLowerCase()
+                        .includes(fieldFilter.toLowerCase()),
+                  )
+                  .map((field) => {
+                    const value = drafts[field.fieldId] ?? null;
+                    const ready = dispositionReady(field, value, repeatDrafts[field.fieldId]);
+                    const active = field.fieldId === activeFieldId;
+                    return (
+                      <li
+                        id={`training-field-${field.fieldId}`}
+                        className={`training-field ${ready ? 'assigned' : 'unmapped'}${active ? ' active' : ''}`}
+                        key={field.fieldId}
                       >
-                        <span className="field-number">{field.sequence}</span>
-                        <span className="field-description">
-                          <strong>
-                            {carrierDisplayText(field.control.label, 'Private carrier label')}
-                          </strong>
-                          <small>{carrierFieldMetadata(field)}</small>
-                          <small className={ready ? 'mapped-summary' : 'missing-summary'}>
-                            {mappingSummary(value, session.catalog.fields)}
-                          </small>
-                        </span>
-                      </button>
-                      {active && !locked && (
-                        <DispositionEditor
-                          field={field}
-                          value={value}
-                          catalog={session.catalog.fields}
-                          entityLimits={session.catalog.entityLimits}
-                          repeatBinding={repeatDrafts[field.fieldId] ?? null}
-                          onChange={(next) => updateDisposition(field.fieldId, next)}
-                          onRepeatBinding={(next) => updateRepeatBinding(field.fieldId, next)}
-                        />
-                      )}
-                    </li>
-                  );
-                })}
+                        <div className="field-card-header">
+                          <button
+                            type="button"
+                            className="field-heading"
+                            disabled={working}
+                            aria-expanded={active}
+                            onClick={() => {
+                              setActiveFieldId(active ? '' : field.fieldId);
+                              if (boundToTab && !studio)
+                                void perform(async () => {
+                                  await controller.current.focus(field.fieldId);
+                                });
+                            }}
+                          >
+                            <span className="field-number">{field.sequence}</span>
+                            <span className="field-description">
+                              <strong>
+                                {field.control.reference?.label ||
+                                  carrierDisplayText(
+                                    field.control.label,
+                                    `Carrier field ${field.sequence}`,
+                                  )}
+                              </strong>
+                              <small>{carrierFieldMetadata(field)}</small>
+                              <small className={ready ? 'mapped-summary' : 'missing-summary'}>
+                                {mappingSummary(value, session.catalog.fields)}
+                              </small>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            role="switch"
+                            className="field-ignore-toggle"
+                            aria-label={`Ignore field ${field.sequence}`}
+                            aria-checked={value?.kind === 'ignore'}
+                            disabled={
+                              locked || working || field.control.required || field.control.humanOnly
+                            }
+                            title={
+                              field.control.humanOnly
+                                ? 'This field requires human action.'
+                                : field.control.required
+                                  ? 'Required fields cannot be ignored.'
+                                  : value?.kind === 'ignore'
+                                    ? 'Turn off to mark this field as missing a mapping.'
+                                    : 'Ignore this field. Changes save automatically.'
+                            }
+                            onClick={() =>
+                              updateDisposition(
+                                field.fieldId,
+                                value?.kind === 'ignore' ? null : { kind: 'ignore' },
+                              )
+                            }
+                          >
+                            <span>Ignore</span>
+                            <span className="field-ignore-track" aria-hidden="true" />
+                          </button>
+                        </div>
+                        {(active || studio) && !locked && (
+                          <fieldset className="mapping-editor" disabled={working}>
+                            <DispositionEditor
+                              field={field}
+                              value={value}
+                              catalog={session.catalog.fields}
+                              entityLimits={session.catalog.entityLimits}
+                              repeatBinding={repeatDrafts[field.fieldId] ?? null}
+                              onChange={(next) => updateDisposition(field.fieldId, next)}
+                              onRepeatBinding={(next) => updateRepeatBinding(field.fieldId, next)}
+                            />
+                          </fieldset>
+                        )}
+                      </li>
+                    );
+                  })}
               </ol>
             </section>
           )}
 
-          {activePage && activePage.workflowControls.length > 0 && (
+          {activePage && !session.recording && activePage.workflowControls.length > 0 && (
             <section className="training-fields workflow-controls">
               <div className="section-heading">
                 <div>
@@ -1197,7 +1517,7 @@ export function TrainingPanel({
                         className="field-heading"
                         onClick={() => {
                           setActiveFieldId(overlayId);
-                          if (boundToTab)
+                          if (boundToTab && !studio)
                             void perform(async () => {
                               await controller.current.focus(overlayId);
                             });
@@ -1206,7 +1526,8 @@ export function TrainingPanel({
                         <span className="field-number">{control.sequence}</span>
                         <span className="field-description">
                           <strong>
-                            {carrierDisplayText(control.control.label, 'Private workflow label')}
+                            {control.control.reference?.label ||
+                              carrierDisplayText(control.control.label, 'Workflow control')}
                           </strong>
                           <small>
                             {control.kind === 'ordinary_next'
@@ -1219,8 +1540,10 @@ export function TrainingPanel({
                         <label className="workflow-decision">
                           How should SmartMapper handle this control?
                           <select
+                            disabled={working}
                             value={decision ?? ''}
                             onChange={(event) => {
+                              editorState.current.dirty = true;
                               const value = event.target.value as '' | 'use' | 'ignore';
                               editGeneration.current += 1;
                               setWorkflowDrafts((current) => ({
@@ -1247,14 +1570,23 @@ export function TrainingPanel({
             </section>
           )}
 
-          {session.training.status === 'draft' && (
-            <section>
+          {session.training.status === 'draft' && !session.recording && (
+            <section className="training-actions">
               <h2>Continue training</h2>
+              {session.training.previewResults?.at(-1) && (
+                <p role="status">
+                  Last page test: {session.training.previewResults.at(-1)!.verified} verified ?{' '}
+                  {session.training.previewResults.at(-1)!.failed} failed ?{' '}
+                  {session.training.previewResults.at(-1)!.reviews} need review.
+                </p>
+              )}
+
               <p>
-                Save this page, navigate the carrier yourself, then capture the next page or a
-                revealed conditional scenario.
+                {studio
+                  ? 'Your edits save automatically. Open the matching carrier page, then test the saved choices with a demo quote.'
+                  : 'Save this page, navigate the carrier yourself, then capture the next page or a revealed conditional scenario.'}
               </p>
-              <div className="actions">
+              <div className={`actions${studio ? ' reference-capture-hidden' : ''}`}>
                 <button
                   className="secondary"
                   disabled={!dirty || saving || working}
@@ -1291,12 +1623,37 @@ export function TrainingPanel({
                 </button>
               </div>
               <button
+                className="preview-mapping"
+                disabled={working || saving || (!studio && !boundToTab) || !activePage}
+                onClick={() =>
+                  void perform(async () => {
+                    const saved = await persist();
+                    if (!saved || !activePage) return;
+                    if (studio) await controller.current.returnToCarrier();
+                    const preview = await controller.current.preview(activePage.pageId);
+                    setSession(preview);
+                    onTestMapping({
+                      mappingId: preview.previewMapping!.mappingId,
+                      mappingVersion: preview.previewMapping!.mappingVersion,
+                      preview: true,
+                      formType: preview.training.workflow.lineOfBusiness,
+                    });
+                  })
+                }
+              >
+                Pause training &amp; test
+              </button>
+              <p className="field-help">
+                Try your saved choices on this page with a demo quote, then resume this draft.
+                Unmapped fields are skipped for review.
+              </p>
+              <button
                 className="complete-mapping"
                 disabled={
                   working ||
                   saving ||
                   dirty ||
-                  !boundToTab ||
+                  (!studio && !boundToTab) ||
                   !session.training.pages.length ||
                   savedUnmapped > 0 ||
                   savedWorkflowUndecided > 0
@@ -1353,6 +1710,13 @@ export function TrainingPanel({
                     : 'This trained mapping is active for matching carrier workflows.'}
               </p>
               <div className="actions">
+                <button
+                  className="secondary"
+                  disabled={working}
+                  onClick={() => void perform(() => editSavedMapping(session.publishedMapping!))}
+                >
+                  Continue training this mapping
+                </button>
                 {['testable', 'verified', 'active'].includes(session.publishedMapping.status) && (
                   <button
                     onClick={() =>
