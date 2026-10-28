@@ -9,7 +9,7 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
-The current extension is **0.3.9**; the backend is **0.3.8**. Numbered outlines follow their carrier
+The current extension is **0.3.12**; the backend is **0.3.8**. Numbered outlines follow their carrier
 controls through document and nested scrolling. During ordinary training, **Automatically number new
 fields** captures revealed fields and subsequent pages after they settle. Existing fields keep their
 numbers and mappings; new fields receive the next numbers. Hiding and reopening a captured section
@@ -99,20 +99,36 @@ recovers durable drafts or opens a published version for testing on a newly auth
 
 ## Build and validate
 
-Use Node 24 and the pinned pnpm version. This checkout also has local tools under `.tools`:
+Use Node 24 and the pinned pnpm version. On Windows, use `pnpm.cmd` if PowerShell blocks
+`pnpm.ps1`; no execution-policy change is needed. Run commands from the repository root:
 
 ```powershell
-$env:PATH = "$PWD\.tools\node-v24.19.0-win-x64;$env:PATH"
-$env:COREPACK_HOME = "$PWD\.tools\corepack"
-$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\.tools\playwright"
-pnpm install --frozen-lockfile
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm test:e2e
+node --version # Must be v24.x
+pnpm.cmd install --frozen-lockfile
+pnpm.cmd format:check
+pnpm.cmd lint
+pnpm.cmd typecheck
+pnpm.cmd test
+pnpm.cmd build
+pnpm.cmd test:e2e
 ```
+
+If Node 24 is not installed yet, use a temporary runtime for each command:
+
+```powershell
+npm.cmd exec --yes --package=node@24 -- pnpm.cmd install --frozen-lockfile
+npm.cmd exec --yes --package=node@24 -- pnpm.cmd build
+```
+
+The extension already declares `zod`. If resolution fails, repair the workspace installation with
+`pnpm.cmd install --force --frozen-lockfile` under Node 24. Keep optional dependencies enabled:
+Rolldown needs its matching native binding. The Windows x64 fallback is optional for portability.
+If stale workspace junctions remain after repair, remove only the generated root and app/package
+`node_modules` directories, then reinstall with `--frozen-lockfile` and rebuild.
+
+After building, open **chrome://extensions**, enable **Developer mode**, and choose **Load unpacked**
+with `apps/extension-prototype/dist`. Reload existing installations and check panel version **0.3.12**.
+Use `pnpm.cmd exec playwright install chromium` if browser tests need Chromium.
 
 Browser tests use synthetic profiles, M.I.A. manifests, and carrier pages. The registry lifecycle E2E
 uses the real training, registry, mapping, and content-executor boundaries to publish, prove, verify,

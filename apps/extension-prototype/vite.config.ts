@@ -18,9 +18,10 @@ export default defineConfig(({ mode }) => {
     env.VITE_SMARTMAPPER_BACKEND_ORIGIN ??
       'https://asp-smartmapper-dev-fgbqddfbewfrd2at.eastus-01.azurewebsites.net',
   );
-  const miaOrigin = origin(env.VITE_SMARTMAPPER_MIA_ORIGIN ?? 'https://mia.test');
+  const miaOrigin = origin(env.VITE_SMARTMAPPER_MIA_ORIGIN ?? 'https://demo.mia.agency');
   const carrierOrigins = (
-    env.VITE_SMARTMAPPER_CARRIER_ORIGINS ?? 'http://localhost:4173,http://127.0.0.1:4173'
+    env.VITE_SMARTMAPPER_CARRIER_ORIGINS ??
+    'http://localhost:4173,http://127.0.0.1:4173,https://alliedtrustagents.com,https://www.alliedtrustagents.com'
   )
     .split(',')
     .map((item) => origin(item.trim()));

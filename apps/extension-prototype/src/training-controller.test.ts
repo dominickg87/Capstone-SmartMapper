@@ -8,7 +8,13 @@ vi.mock('./config.js', () => ({
   config: {
     miaOrigin: 'https://mia.test',
     backendOrigin: 'https://backend.test',
-    carrierOrigins: ['https://carrier.test'],
+    carrierOrigins: [
+      'https://carrier.test',
+      'https://alliedtrustagents.com',
+      'https://www.alliedtrustagents.com',
+      'http://localhost:4173',
+      'http://127.0.0.1:4173',
+    ],
     allowAnyCarrier: false,
   },
 }));
@@ -18,6 +24,55 @@ vi.mock('./session.js', () => ({
 }));
 
 afterEach(() => vi.unstubAllGlobals());
+
+describe('training carrier identity with an explicit origin allowlist', () => {
+  it.each([
+    'https://alliedtrustagents.com',
+    'https://www.alliedtrustagents.com',
+    'http://localhost:4173',
+    'http://127.0.0.1:4173',
+  ])('detects %s without retaining quote paths or identifiers', async (origin) => {
+    const fetch = vi.fn();
+    vi.stubGlobal('fetch', fetch);
+    vi.stubGlobal('location', { search: '?tabId=7' });
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: () =>
+          Promise.resolve([
+            {
+              id: 7,
+              windowId: 1,
+              url: `${origin}/Quote/Quote.aspx?quote=synthetic#applicant`,
+            },
+          ]),
+      },
+    });
+
+    await expect(new TrainingController().carrierIdentity()).resolves.toEqual({
+      carrierOrigin: origin,
+      carrierBaseUrl: origin,
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'https://unlisted-carrier.test',
+    'https://alliedtrustagents.com.unlisted.test',
+    'http://alliedtrustagents.com',
+    'http://localhost:9000',
+  ])('rejects the unlisted origin %s', async (origin) => {
+    vi.stubGlobal('location', { search: '?tabId=7' });
+    vi.stubGlobal('chrome', {
+      tabs: {
+        query: () => Promise.resolve([{ id: 7, windowId: 1, url: `${origin}/quote` }]),
+      },
+    });
+
+    await expect(new TrainingController().carrierIdentity()).rejects.toThrow(
+      'This carrier origin is not enabled for SmartMapper.',
+    );
+  });
+});
 
 describe('training API errors', () => {
   it.each([
