@@ -3,6 +3,9 @@ node_modules/
 .pnpm-store/
 dist-types/
 dist/
+# Commit the loadable POC extension so testers do not need a local build toolchain.
+!/apps/extension-prototype/dist/
+!/apps/extension-prototype/dist/**
 coverage/
 *.tsbuildinfo
 .tools/

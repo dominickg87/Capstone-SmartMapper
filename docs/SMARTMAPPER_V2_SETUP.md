@@ -1,6 +1,6 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys backend **0.3.8** and extension **0.3.9**, the human-trained deterministic mapping registry accepted in
+This guide deploys backend **0.3.8** and extension **0.3.10**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -144,6 +144,16 @@ not make carrier requests from the backend or add blanket carrier host permissio
 
 ## 4. Build and load the POC extension
 
+For team testing, the ready-to-load `apps/extension-prototype/dist` folder is tracked in Git on
+`Dom-astra-2.0approach`. Pull that branch, open `chrome://extensions`, enable **Developer mode**, and
+choose **Load unpacked** on that folder. Confirm **0.3.10**. On subsequent pulls, click **Reload** on
+the existing extension card. Loading this committed build requires no Node, pnpm or local `.env` file.
+It targets `https://demo.mia.agency` and the existing Azure backend. A new machine's unpacked extension
+ID may differ: append its `chrome-extension://ID` to M.I.A.'s `CORS_ALLOWED_ORIGINS` and its bare ID to
+Azure's `SMARTMAPPER_EXTENSION_IDS`, preserving existing entries. Tenant/user permissions still apply.
+
+For contributors rebuilding the extension:
+
 Copy `apps/extension-prototype/.env.example` to
 `apps/extension-prototype/.env.local` and set exact origins:
 
@@ -167,7 +177,13 @@ pnpm test:e2e
 
 Open `chrome://extensions`, enable Developer mode, and **Load unpacked** from
 `apps/extension-prototype/dist`. For an existing load, click **Reload**, close the old panel, and open
-it again. Confirm **Version 0.3.3** in the panel and on Chrome's extension card.
+it again. Confirm **Version 0.3.10** in the panel and on Chrome's extension card.
+
+Commit the refreshed `apps/extension-prototype/dist` together with its source and version changes.
+Review the generated manifest's version and origins before committing; local mock builds must not
+replace the shared demo build. Only this POC extension's `dist` is included in Git. Other build output,
+dependencies, environment files and browser state remain ignored. Generated bundles are excluded
+from source formatting and linting.
 
 Click the toolbar icon on the carrier tab. The panel stays attached only to that activated tab.
 Connect to M.I.A. through the normal agency sign-in. **Connection details** supplies the extension ID
@@ -175,7 +191,7 @@ and M.I.A. tenant/user scope without exposing its bearer token.
 
 Opening the panel does not require deploying M.I.A. or the Azure backend. Those paired deployments
 are needed for retrieving field catalogs, saving training, and running registry-backed mapping.
-If the panel does not open, check that Chrome's extension card shows 0.3.3, close any stale panel,
+If the panel does not open, check that Chrome's extension card shows 0.3.10, close any stale panel,
 return to a normal HTTP/HTTPS carrier tab, and click this POC's toolbar icon. Restricted pages such
 as `chrome://extensions` cannot activate the carrier panel. An opening failure shows a `!` badge;
 the extension service worker console records only `smartmapper.panel` and a reason code such as
@@ -186,7 +202,7 @@ Reconnect once after deploying the M.I.A. branch so the extension receives the n
 
 ## 5. Train a workflow
 
-For the record-first workflow in extension **0.3.9**:
+For the record-first workflow in extension **0.3.10**:
 
 1. Open the carrier tab, connect to M.I.A., choose **Train**, then Home or Auto.
 2. Choose **Record carrier workflow**, or **Continue recording** in an existing draft.
@@ -285,7 +301,7 @@ other populated or conditional fields. Preview results are tied to their draft r
 is never evidence that a completed production version has passed full coverage.
 
 No M.I.A. web app deployment or additional Azure provisioning is required for this update. Deploy
-SmartMapper backend 0.3.8 and reload extension 0.3.9 before using previews. These builds include the fix for false
+SmartMapper backend 0.3.8 and reload extension 0.3.10 before using previews. These builds include the fix for false
 `preview_page_changed` rejections caused by dropdown choices omitted during private training capture.
 Saved drafts and mappings keep their existing IDs, signatures, and choices; retraining is unnecessary
 for this correction. Trained human-only fields still require human action. Actual route, control

@@ -9,7 +9,16 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
-The current extension is **0.3.9**; the backend is **0.3.8**. Numbered outlines follow their carrier
+The current extension is **0.3.10**; the backend is **0.3.8**. The loadable POC build is committed in
+`apps/extension-prototype/dist` for team testing. Pull `Dom-astra-2.0approach`, open
+`chrome://extensions`, enable **Developer mode**, and **Load unpacked** that folder (the one containing
+`manifest.json`). No Node installation or local build is needed to load the committed extension.
+For an existing installation, pull updates and click **Reload** on the extension card. Confirm the
+displayed version. This build connects to the existing demo M.I.A. and SmartMapper Azure services.
+An unpacked extension can have a different ID on another machine; its ID must be allowed by M.I.A.
+and the backend before connecting. See the [setup guide](docs/SMARTMAPPER_V2_SETUP.md#4-build-and-load-the-poc-extension).
+
+Numbered outlines follow their carrier
 controls through document and nested scrolling. During ordinary training, **Automatically number new
 fields** captures revealed fields and subsequent pages after they settle. Existing fields keep their
 numbers and mappings; new fields receive the next numbers. Hiding and reopening a captured section

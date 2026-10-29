@@ -2,3 +2,6 @@
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Preserve whitespace in bundled dependency template literals; review source changes instead.
+apps/extension-prototype/dist/** linguist-generated=true -whitespace

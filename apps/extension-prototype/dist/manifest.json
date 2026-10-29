@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "M.I.A. SmartMapper POC",
+  "version": "0.3.10",
+  "minimum_chrome_version": "116",
+  "description": "Map a selected M.I.A. quote across pages, with source checks and human review.",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://asp-smartmapper-dev-fgbqddfbewfrd2at.eastus-01.azurewebsites.net/*",
+    "https://demo.mia.agency/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open SmartMapper"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://demo.mia.agency/extension/connect*"
+      ],
+      "js": [
+        "auth-content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
