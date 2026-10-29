@@ -1,6 +1,6 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys backend **0.3.8** and extension **0.3.10**, the human-trained deterministic mapping registry accepted in
+This guide deploys backend **0.3.9** and extension **0.3.10**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -152,6 +152,12 @@ It targets `https://demo.mia.agency` and the existing Azure backend. A new machi
 ID may differ: append its `chrome-extension://ID` to M.I.A.'s `CORS_ALLOWED_ORIGINS` and its bare ID to
 Azure's `SMARTMAPPER_EXTENSION_IDS`, preserving existing entries. Tenant/user permissions still apply.
 
+M.I.A. sign-in can succeed while Azure rejects a new extension ID. If the panel says Connected but
+training cannot start, compare the ID in **Connection details** with Azure's allowlist. A permitted
+extension's OPTIONS request to `/v2/training/sessions` returns 204 with its exact
+`Access-Control-Allow-Origin`; an unlisted ID returns 403. This checks the extension origin only;
+the subsequent training request still requires the signed-in user's training permission.
+
 For contributors rebuilding the extension:
 
 Copy `apps/extension-prototype/.env.example` to
@@ -301,7 +307,7 @@ other populated or conditional fields. Preview results are tied to their draft r
 is never evidence that a completed production version has passed full coverage.
 
 No M.I.A. web app deployment or additional Azure provisioning is required for this update. Deploy
-SmartMapper backend 0.3.8 and reload extension 0.3.10 before using previews. These builds include the fix for false
+SmartMapper backend 0.3.9 and reload extension 0.3.10 before using previews. These builds include the fix for false
 `preview_page_changed` rejections caused by dropdown choices omitted during private training capture.
 Saved drafts and mappings keep their existing IDs, signatures, and choices; retraining is unnecessary
 for this correction. Trained human-only fields still require human action. Actual route, control
@@ -353,7 +359,7 @@ az webapp deploy `
 ```
 
 Open the backend `/health` endpoint and expect `status: "ok"`, protocol `version: "2.0"`, and
-`buildVersion: "0.3.8"`. Health verifies process startup only. Complete the training and mapping
+`buildVersion: "0.3.9"`. Health verifies process startup only. Complete the training and mapping
 checks above to verify M.I.A., identity, both Azure Tables, and browser execution.
 
 Startup HTTP 409 errors now preserve an allowlisted `apiReason` in copied diagnostics and backend

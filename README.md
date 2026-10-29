@@ -9,7 +9,7 @@ SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approac
 M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
 not modify the live `MIA-Chrome-Extension` repository.
 
-The current extension is **0.3.10**; the backend is **0.3.8**. The loadable POC build is committed in
+The current extension is **0.3.10**; the backend is **0.3.9**. The loadable POC build is committed in
 `apps/extension-prototype/dist` for team testing. Pull `Dom-astra-2.0approach`, open
 `chrome://extensions`, enable **Developer mode**, and **Load unpacked** that folder (the one containing
 `manifest.json`). No Node installation or local build is needed to load the committed extension.
