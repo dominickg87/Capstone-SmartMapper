@@ -1,8 +1,9 @@
+import { activateToolbar, panelText, clickPanelButton } from './helpers/side-panel.js';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createServer, type Server } from 'node:http';
-import { chromium, expect, test, type CDPSession, type Page } from '@playwright/test';
+import { chromium, expect, test } from '@playwright/test';
 import {
   PageObservationSchema,
   type MiaFieldCatalog,
@@ -10,6 +11,7 @@ import {
   type TrainingSessionView,
 } from '@smartmapper/contracts';
 import { structuralTrainingObservation } from '../../apps/extension-prototype/src/training-observation.js';
+import type { createFieldInventory } from '../../apps/extension-prototype/src/field-inventory.js';
 import { ActiveTabJobService } from '../../apps/orchestrator-api/src/active-tab-service.js';
 import { MemoryCheckpointStore } from '../../apps/orchestrator-api/src/checkpoints.js';
 import { MemoryMappingRegistryStore } from '../../apps/orchestrator-api/src/mapping-registry.js';
@@ -24,74 +26,18 @@ const extensionPackage = JSON.parse(
   readFileSync(resolve('apps/extension-prototype/package.json'), 'utf8'),
 ) as { version: string };
 
-async function activateToolbar(client: CDPSession, extensionId: string, carrier: Page) {
-  await carrier.bringToFront();
-  const { targetInfos } = await client.send('Target.getTargets', {
-    filter: [{ type: 'tab', exclude: false }],
-  });
-  const target = targetInfos.find((candidate) => candidate.url === carrier.url());
-  if (!target) throw new Error('synthetic_carrier_tab_target_missing');
-  await client.send('Extensions.triggerAction', { id: extensionId, targetId: target.targetId });
-}
-
-// Playwright does not expose Chrome's SIDE_PANEL targets as normal context pages.
-// Read the actual panel DOM over CDP rather than opening a substitute browser tab.
-async function panelText(
-  client: CDPSession,
-  documentUrl: string,
-  expression = 'document.body.innerText',
-): Promise<string> {
-  const { targetInfos } = await client.send('Target.getTargets', { filter: [{}] });
-  const target = targetInfos.find(
-    (candidate) => candidate.type === 'page' && candidate.url === documentUrl,
-  );
-  if (!target) return '';
-  const { sessionId } = await client.send('Target.attachToTarget', {
-    targetId: target.targetId,
-    flatten: false,
-  });
-  try {
-    return await new Promise<string>((resolveText, reject) => {
-      const receive = (event: { sessionId: string; message: string }) => {
-        if (event.sessionId !== sessionId) return;
-        const message = JSON.parse(event.message) as {
-          id?: number;
-          result?: { result?: { value?: string } };
-        };
-        if (message.id !== 1) return;
-        clearTimeout(timeout);
-        client.off('Target.receivedMessageFromTarget', receive);
-        resolveText(message.result?.result?.value ?? '');
-      };
-      const timeout = setTimeout(() => {
-        client.off('Target.receivedMessageFromTarget', receive);
-        reject(new Error('synthetic_panel_read_timeout'));
-      }, 3000);
-      client.on('Target.receivedMessageFromTarget', receive);
-      void client
-        .send('Target.sendMessageToTarget', {
-          sessionId,
-          message: JSON.stringify({
-            id: 1,
-            method: 'Runtime.evaluate',
-            params: { expression, returnByValue: true },
-          }),
-        })
-        .catch((error: unknown) => {
-          clearTimeout(timeout);
-          client.off('Target.receivedMessageFromTarget', receive);
-          reject(error instanceof Error ? error : new Error('synthetic_panel_read_failed'));
-        });
-    });
-  } finally {
-    await client.send('Target.detachFromTarget', { sessionId });
-  }
-}
-
 test.beforeAll(() => {
   execFileSync(
     process.execPath,
-    [resolve('node_modules/vite/bin/vite.js'), 'build', '--outDir', extensionPath, '--emptyOutDir'],
+    [
+      resolve('node_modules/vite/bin/vite.js'),
+      'build',
+      '--config',
+      'vite.registry-test.config.ts',
+      '--outDir',
+      extensionPath,
+      '--emptyOutDir',
+    ],
     {
       cwd: resolve('apps/extension-prototype'),
       env: {
@@ -132,17 +78,6 @@ async function closeServer(server: Server | undefined) {
   if (!server) return;
   await new Promise<void>((resolveClosed, reject) =>
     server.close((error) => (error ? reject(error) : resolveClosed())),
-  );
-}
-
-function clickPanelButton(client: CDPSession, documentUrl: string, label: string) {
-  return panelText(
-    client,
-    documentUrl,
-    `(() => {
-    const button = Array.from(document.querySelectorAll('button')).find(item => item.textContent.trim() === ${JSON.stringify(label)});
-    if (!button || button.disabled) return 'unavailable'; button.click(); return 'clicked';
-  })()`,
   );
 }
 
@@ -516,6 +451,7 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
         entity: null,
       })),
     };
+    let catalogNeedsRefresh = true;
     const source: SourceAnswers = {
       version: '2.0',
       tenantId: 'tenant',
@@ -600,9 +536,13 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
         return;
       }
       response.setHeader('Content-Type', 'application/json');
-      if (request.url === '/api/extension/smartmapper/v2/catalog/home')
-        response.end(JSON.stringify(catalog));
-      else if (request.url?.endsWith('/grants'))
+      if (request.url === '/api/extension/smartmapper/v2/catalog/home') {
+        if (catalogNeedsRefresh)
+          response
+            .writeHead(409)
+            .end(JSON.stringify({ message: 'SmartMapper question catalog needs regeneration.' }));
+        else response.end(JSON.stringify(catalog));
+      } else if (request.url?.endsWith('/grants'))
         response.end(JSON.stringify({ code: 'g'.repeat(32) }));
       else if (request.url?.startsWith('/api/extension/quotes/search'))
         response.end(
@@ -662,6 +602,12 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
     await expect.poll(text).toContain('Connected to M.I.A.');
     expect(await click('Train')).toBe('clicked');
     await expect.poll(text).toContain('Start training and capture this page');
+    expect(await click('Start training and capture this page')).toBe('clicked');
+    await expect.poll(text).toContain('mia_catalog_refresh_required');
+    await expect.poll(text).toContain('M.I.A. Home catalog; HTTP 409');
+    expect(await saved()).toBeUndefined();
+    await expect(carrier.locator('#smartmapper-training-overlay')).toHaveCount(0);
+    catalogNeedsRefresh = false;
     expect(await click('Start training and capture this page')).toBe('clicked');
     await expect.poll(text).toContain('Pause training & test');
     await expect.poll(async () => (await saved()).training.pages.length).toBe(1);
@@ -943,6 +889,7 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
     expect((await saved()).training.pages).toHaveLength(3);
     expect(await click('Continue recording')).toBe('clicked');
     await expect.poll(text).toContain('Recording page structure');
+    expect(await click('Export field inventory')).toBe('unavailable');
     const referenceOpened = context.waitForEvent('page');
     expect(await click('Stop recording & annotate')).toBe('clicked');
     const reference = await referenceOpened;
@@ -968,6 +915,33 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
     await expect(
       reference.getByRole('switch', { name: `Ignore field ${recordedNote.sequence}`, exact: true }),
     ).toHaveAttribute('aria-checked', 'true');
+    const beforeExport = (await saved()).training;
+    const downloadStarted = reference.waitForEvent('download');
+    await reference.getByRole('button', { name: 'Export field inventory', exact: true }).click();
+    const download = await downloadStarted;
+    expect(download.suggestedFilename()).toBe(
+      `smartmapper-home-fields-r${beforeExport.revision}.json`,
+    );
+    const inventoryPath = testInfo.outputPath('field-inventory.json');
+    await download.saveAs(inventoryPath);
+    const exportedText = readFileSync(inventoryPath, 'utf8');
+    const inventory = JSON.parse(exportedText) as ReturnType<typeof createFieldInventory>;
+    expect(inventory.format).toBe('smartmapper-field-inventory');
+    expect(inventory.pages).toHaveLength(3);
+    expect(
+      inventory.pages[2]!.fields.find((field) => field.fieldId === recordedFirst.fieldId),
+    ).toMatchObject({
+      number: recordedFirst.sequence,
+      label: 'Applicant first name',
+      disposition: 'source',
+    });
+    expect(
+      inventory.pages[2]!.fields.find((field) => field.fieldId === recordedNote.fieldId),
+    ).toMatchObject({ disposition: 'ignore' });
+    expect(inventory.miaCatalog.fields[0]?.sourcePath).toBe('applicant.firstName');
+    for (const excluded of ['Jordan', 'Sample', '"token"', '"binding"', '"tenantId"', '"quoteId"'])
+      expect(exportedText).not.toContain(excluded);
+    expect((await saved()).training).toEqual(beforeExport);
     await reference.screenshot({
       path: testInfo.outputPath('field-reference.png'),
       fullPage: true,

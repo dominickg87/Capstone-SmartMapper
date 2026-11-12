@@ -1,46 +1,31 @@
 import { resolve } from 'node:path';
 import react from '@vitejs/plugin-react';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import packageJson from './package.json' with { type: 'json' };
 
-export default defineConfig(({ mode }) => {
-  const env = { ...loadEnv(mode, process.cwd(), 'VITE_'), ...process.env };
-  const origin = (value: string): string => {
+export default defineConfig(() => {
+  const configuredOrigin = (value: string): string => {
     const url = new URL(value);
     if (
       url.origin !== value ||
-      (url.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(url.hostname))
+      (url.protocol !== 'https:' &&
+        !(url.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(url.hostname)))
     )
-      throw new Error('Expected an exact HTTPS origin or localhost');
-    return value;
+      throw new Error('Expected an exact HTTPS or localhost origin');
+    return url.origin;
   };
-  const backendOrigin = origin(
-    env.VITE_SMARTMAPPER_BACKEND_ORIGIN ??
-      'https://asp-smartmapper-dev-fgbqddfbewfrd2at.eastus-01.azurewebsites.net',
+  const miaOrigin = configuredOrigin(
+    process.env.VITE_SMARTMAPPER_MIA_ORIGIN ?? 'https://demo.mia.agency',
   );
-  const miaOrigin = origin(env.VITE_SMARTMAPPER_MIA_ORIGIN ?? 'https://mia.test');
-  const carrierOrigins = (
-    env.VITE_SMARTMAPPER_CARRIER_ORIGINS ?? 'http://localhost:4173,http://127.0.0.1:4173'
-  )
-    .split(',')
-    .map((item) => origin(item.trim()));
-  const anyCarrierSetting = env.VITE_SMARTMAPPER_ALLOW_ANY_CARRIER ?? 'false';
-  if (!['true', 'false'].includes(anyCarrierSetting))
-    throw new Error('Expected true or false for VITE_SMARTMAPPER_ALLOW_ANY_CARRIER');
-  const allowAnyCarrier = anyCarrierSetting === 'true';
+  const carrierOrigin = configuredOrigin(
+    process.env.VITE_HOME_DEMO_CARRIER_ORIGIN ?? 'https://www.alliedtrustagents.com',
+  );
   return {
-    define: {
-      __SMARTMAPPER_CONFIG__: JSON.stringify({
-        backendOrigin,
-        miaOrigin,
-        carrierOrigins,
-        allowAnyCarrier,
-      }),
-    },
+    define: { __HOME_DEMO_CONFIG__: JSON.stringify({ miaOrigin, carrierOrigin }) },
     plugins: [
       react(),
       {
-        name: 'smartmapper-manifest',
+        name: 'smartmapper-reader-manifest',
         generateBundle() {
           this.emitFile({
             type: 'asset',
@@ -51,19 +36,9 @@ export default defineConfig(({ mode }) => {
                 name: 'M.I.A. SmartMapper POC',
                 version: packageJson.version,
                 minimum_chrome_version: '116',
-                description:
-                  'Map a selected M.I.A. quote across pages, with source checks and human review.',
-                permissions: ['activeTab', 'storage', 'scripting', 'sidePanel'],
-                host_permissions: [
-                  ...new Set([
-                    backendOrigin,
-                    miaOrigin,
-                    ...(allowAnyCarrier ? [] : carrierOrigins),
-                  ]),
-                ].map((item) => item + '/*'),
-                background: { service_worker: 'background.js', type: 'module' },
-                action: { default_title: 'Open SmartMapper' },
-                side_panel: { default_path: 'sidepanel.html' },
+                description: 'Map a M.I.A. Homeowners quote with a deterministic demo profile.',
+                permissions: ['activeTab', 'scripting', 'sidePanel', 'storage'],
+                host_permissions: [miaOrigin + '/*'],
                 content_scripts: [
                   {
                     matches: [miaOrigin + '/extension/connect*'],
@@ -71,6 +46,9 @@ export default defineConfig(({ mode }) => {
                     run_at: 'document_idle',
                   },
                 ],
+                background: { service_worker: 'background.js', type: 'module' },
+                action: { default_title: 'Open SmartMapper' },
+                side_panel: { default_path: 'sidepanel.html' },
               },
               null,
               2,
@@ -85,8 +63,7 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         input: {
           sidepanel: resolve(import.meta.dirname, 'sidepanel.html'),
-          reference: resolve(import.meta.dirname, 'reference.html'),
-          background: resolve(import.meta.dirname, 'src/background.ts'),
+          background: resolve(import.meta.dirname, 'src/demo-background.ts'),
           'auth-content': resolve(import.meta.dirname, 'src/auth-content.ts'),
         },
         output: { entryFileNames: '[name].js' },

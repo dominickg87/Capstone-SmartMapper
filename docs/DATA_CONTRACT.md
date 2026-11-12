@@ -1,6 +1,25 @@
 # Data contract
 
-## Active protocol
+## Fixed Home demo
+
+ADR 0025 reuses `PageObservation`, `ActionBatch`, `SourceAnswer` and `ActionReceipt` from the shared
+2.0 contracts. The profile's structural name/ID hints resolve only unique current controls. The
+planner selects source paths per target and converts only supported representations. Live option
+values come from the current observation, not the worksheet. Receipts remain value-free statuses
+and hashes; source data stays in memory. The regular M.I.A. extension API is schema-validated at the
+panel boundary. Its quote search/detail contract does not depend on the SmartMapper catalog.
+
+## Local page-reader result
+
+The installed extension uses `ReadPageDataSchema` and `ReadPageFieldSchema` from
+`packages/contracts/src/page-reader.ts`. These describe an ephemeral list of labels, control types,
+structural identifiers, available choices and discovery limits, plus an origin and ephemeral UUID
+for each field. Current entered values and selection state are excluded. It is not a registry record.
+ADR 0024 permits an explicit local worksheet export: the panel projects field descriptions and the
+user's chosen bundled Homeowners source paths into plain text, never executable actions. See
+[ADR 0023](adr/0023-local-page-reader.md) and [ADR 0024](adr/0024-local-mapping-notes.md).
+
+## Retained registry protocol
 
 The active SmartMapper wire protocol remains **2.0**. Build numbers such as 0.3.0 identify deployed
 application code and do not change the protocol version. `packages/contracts` is the source of truth;

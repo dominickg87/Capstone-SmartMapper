@@ -1,6 +1,12 @@
 # SmartMapper 2.0 deterministic-registry setup
 
-This guide deploys backend **0.3.9** and extension **0.3.10**, the human-trained deterministic mapping registry accepted in
+**Historical setup.** Extension **0.3.15** uses the fixed Home demo in
+[ADR 0025](adr/0025-home-demo-crosswalk.md) and retains the local page-reference tools.
+Follow [README.md](../README.md) to load and test it. It uses M.I.A.'s regular extension quote API;
+no SmartMapper backend deployment or catalog refresh is required. The instructions below describe
+the retained registry implementation and do not apply to the current installed extension.
+
+This guide deploys backend **0.3.9** and extension **0.3.12**, the human-trained deterministic mapping registry accepted in
 [ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md). It uses the resources already
 provisioned in `rg-mia-smartmap-prod`, including the `SmartMapperMappings` Azure Table. It does not
 modify the live `MIA-Chrome-Extension` repository.
@@ -78,6 +84,15 @@ change quote answers. The value-free Home/Auto catalog is generated from reviewe
 definitions. When those forms change, regenerate `resources/smartmapper/questions.json`, review the
 diff, and rerun `SmartMapperV2Test.php`; a source digest mismatch deliberately blocks a stale catalog.
 
+Extension 0.3.12 recognizes M.I.A.'s legacy HTTP 409 response `SmartMapper question catalog needs
+regeneration.` and displays `mia_catalog_refresh_required` with the failed catalog step. This can
+occur before any carrier page is captured. Refresh the catalog against the exact deployed M.I.A.
+form sources, review the generated definitions and deploy the catalog with those sources. Reloading
+the panel cannot repair a server-side catalog mismatch. Do not bypass the fingerprint check or copy
+source digests without reviewing regenerated question metadata. A new catalog revision can require
+review of older training drafts. Other HTTP 409 failures display a fixed step label and status,
+without exposing arbitrary server conflict text or request URLs.
+
 The catalog includes both Home applicants and all supported Auto positions: five additional drivers
 and eight vehicles. It returns the original question and context for every source path, without
 customer values.
@@ -146,7 +161,7 @@ not make carrier requests from the backend or add blanket carrier host permissio
 
 For team testing, the ready-to-load `apps/extension-prototype/dist` folder is tracked in Git on
 `Dom-astra-2.0approach`. Pull that branch, open `chrome://extensions`, enable **Developer mode**, and
-choose **Load unpacked** on that folder. Confirm **0.3.10**. On subsequent pulls, click **Reload** on
+choose **Load unpacked** on that folder. Confirm **0.3.12**. On subsequent pulls, click **Reload** on
 the existing extension card. Loading this committed build requires no Node, pnpm or local `.env` file.
 It targets `https://demo.mia.agency` and the existing Azure backend. A new machine's unpacked extension
 ID may differ: append its `chrome-extension://ID` to M.I.A.'s `CORS_ALLOWED_ORIGINS` and its bare ID to
@@ -183,7 +198,7 @@ pnpm test:e2e
 
 Open `chrome://extensions`, enable Developer mode, and **Load unpacked** from
 `apps/extension-prototype/dist`. For an existing load, click **Reload**, close the old panel, and open
-it again. Confirm **Version 0.3.10** in the panel and on Chrome's extension card.
+it again. Confirm **Version 0.3.12** in the panel and on Chrome's extension card.
 
 Commit the refreshed `apps/extension-prototype/dist` together with its source and version changes.
 Review the generated manifest's version and origins before committing; local mock builds must not
@@ -197,7 +212,7 @@ and M.I.A. tenant/user scope without exposing its bearer token.
 
 Opening the panel does not require deploying M.I.A. or the Azure backend. Those paired deployments
 are needed for retrieving field catalogs, saving training, and running registry-backed mapping.
-If the panel does not open, check that Chrome's extension card shows 0.3.10, close any stale panel,
+If the panel does not open, check that Chrome's extension card shows 0.3.12, close any stale panel,
 return to a normal HTTP/HTTPS carrier tab, and click this POC's toolbar icon. Restricted pages such
 as `chrome://extensions` cannot activate the carrier panel. An opening failure shows a `!` badge;
 the extension service worker console records only `smartmapper.panel` and a reason code such as
@@ -208,7 +223,7 @@ Reconnect once after deploying the M.I.A. branch so the extension receives the n
 
 ## 5. Train a workflow
 
-For the record-first workflow in extension **0.3.10**:
+For the record-first workflow in extension **0.3.12**:
 
 1. Open the carrier tab, connect to M.I.A., choose **Train**, then Home or Auto.
 2. Choose **Record carrier workflow**, or **Continue recording** in an existing draft.
@@ -265,6 +280,29 @@ Drafts autosave in `SmartMapperJobs`. Carrier semantics and option identities pe
 digests. New captures may also retain readable form captions and static option labels from a closed
 allowlist for the reference editor. Unknown or private text receives a numbered fallback. Quote
 answers, current control values, HTML, screenshots, cookies, and browser credentials are excluded.
+
+### Export a field inventory for mapping review
+
+Extension **0.3.11** adds **Export field inventory** to Train and the full-tab field reference.
+Capture one page with **Start training and capture this page**, or use **Record carrier workflow**
+while manually visiting a synthetic quote's pages and conditional sections. Stop recording before
+exporting; pending edits must finish saving. Existing saved drafts can also be exported.
+
+The button downloads `smartmapper-home-fields-r<revision>.json` (or `auto`). Attach that file to
+the mapping discussion and refer to the numbered fields shown on the carrier/reference page.
+The worksheet includes every captured state, field IDs and numbers, permitted captions and option
+labels, hashed option keys, required/human-only flags, disposition kinds, workflow decisions, and
+the M.I.A. question catalog with source paths and available choices. It contains no selected-client
+answers or browser/session backup. It excludes account/tab identity, capabilities, URLs, page text,
+raw DOM identifiers, arbitrary scenario labels, fixed values and transformation payloads.
+
+Readable carrier text is checked again against the existing closed caption/option allowlists.
+Unknown captions use `Carrier field N` / `Carrier option N`; identify them from the live page or
+synthetic-only screenshots. Private choice lists remain omitted. Repeated fields can occur in
+multiple captured states with the same logical number; each state's field identity is retained.
+This is a review worksheet, not an import file, completeness guarantee or executable mapping.
+It never changes a draft, starts a job, verifies or activates a mapping. No backend update,
+permission expansion, new service or agent-operated live-carrier session is needed.
 
 ### Reopen saved work after closing a tab or reloading the extension
 

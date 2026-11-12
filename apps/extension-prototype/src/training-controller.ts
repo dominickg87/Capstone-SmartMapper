@@ -68,6 +68,8 @@ class TrainingApiError extends Error {
 
 function conflictMessage(code: string | undefined): string {
   switch (code) {
+    case 'mia_catalog_refresh_required':
+      return "M.I.A.'s question catalog is out of date with its quote forms. Refresh and deploy the M.I.A. SmartMapper catalog before starting training. Reopening this panel will not fix it. (mia_catalog_refresh_required)";
     case 'revision_conflict':
     case 'training_conflict':
       return 'The training draft changed. Reopen the panel to reload the saved draft before saving again.';
@@ -98,6 +100,20 @@ function conflictMessage(code: string | undefined): string {
   }
 }
 
+function trainingRequestStep(origin: string, path: string): string {
+  if (origin === config.miaOrigin) {
+    if (path === '/api/extension/smartmapper/v2/catalog/home') return 'M.I.A. Home catalog';
+    if (path === '/api/extension/smartmapper/v2/catalog/auto') return 'M.I.A. Auto catalog';
+    if (path === '/api/extension/smartmapper/v2/training/grants') return 'M.I.A. training access';
+    return 'M.I.A. training request';
+  }
+  if (path === '/v2/training/sessions') return 'Start training';
+  if (/\/pages$/.test(path)) return 'Capture carrier page';
+  if (/\/pages\/[a-f0-9-]{36}$/.test(path)) return 'Save field mappings';
+  if (/\/library$/.test(path)) return 'Find saved training';
+  return 'Saved training request';
+}
+
 async function json(
   origin: string,
   path: string,
@@ -124,7 +140,16 @@ async function json(
       .passthrough()
       .safeParse(await response.json().catch(() => null));
     const serverMessage = detail.success ? detail.data.message || detail.data.error : undefined;
-    const code = detail.success ? detail.data.error : undefined;
+    // M.I.A.'s legacy Laravel response supplies a fixed message without an error code.
+    // Recognize only that exact literal; never echo arbitrary conflict response text.
+    const code =
+      origin === config.miaOrigin &&
+      response.status === 409 &&
+      serverMessage === 'SmartMapper question catalog needs regeneration.'
+        ? 'mia_catalog_refresh_required'
+        : detail.success
+          ? detail.data.error
+          : undefined;
     throw new TrainingApiError(
       response.status,
       response.status === 401
@@ -132,7 +157,7 @@ async function json(
         : response.status === 403
           ? 'This account is not authorized to train SmartMapper mappings.'
           : response.status === 409
-            ? conflictMessage(code)
+            ? `${conflictMessage(code)} [${trainingRequestStep(origin, path)}; HTTP 409]`
             : response.status === 422
               ? serverMessage === 'mapping_test_coverage_incomplete'
                 ? 'This test has not covered every trained page and mapped field yet. Continue the carrier workflow, then Resume mapping.'

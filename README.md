@@ -1,120 +1,71 @@
-# M.I.A. SmartMapper
+# M.I.A. SmartMapper POC
 
-Build **0.3.0** replaces the model-planned proof of concept with a human-trained, deterministic
-mapping registry. Astra, PDF interpretation, mapping chat, model suggestions, prompts, and model
-verification are no longer part of the active SmartMapper runtime. The accepted design is recorded
-in [ADR 0018](docs/adr/0018-human-trained-deterministic-mapping-registry.md).
+Extension **0.3.15** implements the fixed Louisiana Homeowners demo in
+[ADR 0025](docs/adr/0025-home-demo-crosswalk.md), with M.I.A. quote selection and 52 source-backed
+field recipes. Supported options and exact coverage conversions are entered and verified on the
+page. Missing facts, ambiguous choices and unapproved defaults remain for review. Final actions
+are manual. The earlier worksheet remains available under **Page reference**.
 
-SmartMapper remains an independent Chrome-extension POC on `Dom-astra-2.0approach`. Its companion
-M.I.A. integration lives on `smartmapper2.0` in the sibling `MIA_web_app` repository. This POC does
-not modify the live `MIA-Chrome-Extension` repository.
+## Load and use
 
-The current extension is **0.3.10**; the backend is **0.3.9**. The loadable POC build is committed in
-`apps/extension-prototype/dist` for team testing. Pull `Dom-astra-2.0approach`, open
-`chrome://extensions`, enable **Developer mode**, and **Load unpacked** that folder (the one containing
-`manifest.json`). No Node installation or local build is needed to load the committed extension.
-For an existing installation, pull updates and click **Reload** on the extension card. Confirm the
-displayed version. This build connects to the existing demo M.I.A. and SmartMapper Azure services.
-An unpacked extension can have a different ID on another machine; its ID must be allowed by M.I.A.
-and the backend before connecting. See the [setup guide](docs/SMARTMAPPER_V2_SETUP.md#4-build-and-load-the-poc-extension).
+1. Open `chrome://extensions` and enable **Developer mode**.
+2. Choose **Load unpacked** and select `apps/extension-prototype/dist`. If already installed from
+   this folder, click **Reload**, close the old side panel, and reopen it. Confirm **0.3.15**.
+3. Open the supported LA/HO3LA quote page and click the **M.I.A. SmartMapper POC** toolbar icon.
+4. Under **Smart Mapper**, click **Sign in to M.I.A.** and sign into `demo.mia.agency`. The verified
+   handoff tab closes automatically; return to the quote tab.
+5. Search for the demo client or quote number, select its Homeowners quote, and click **Map quote**.
+6. Keep the tab active while mapping. Review the verified count and unresolved items. **Stop mapping**
+   stops further work. Running again checks already-entered values. Same-URL native postbacks are
+   re-observed; navigating elsewhere stops the run.
 
-Numbered outlines follow their carrier
-controls through document and nested scrolling. During ordinary training, **Automatically number new
-fields** captures revealed fields and subsequent pages after they settle. Existing fields keep their
-numbers and mappings; new fields receive the next numbers. Hiding and reopening a captured section
-reuses its saved state. See [ADR 0022](docs/adr/0022-live-training-discovery.md).
+No M.I.A. main changes, SmartMapper catalog refresh or backend deployment is needed. The existing
+extension quote API supplies the selected quote. Live custom masks and validation may require a
+follow-up correction after supervised testing.
 
-**Record carrier workflow** passively
-captures visited page states. **Stop recording & annotate** opens a full-tab, autosaving field reference.
-Use **Open field reference** for a saved draft or **Continue recording** to collect more states.
-Readable captions use an approved static vocabulary; unfamiliar captions retain numbered fallbacks.
-New captures include hashed DOM identity hints so changing help text does not automatically lose a
-uniquely identified field. Plans now log matched/action/review counts and closed skip reasons.
-See [ADR 0021](docs/adr/0021-recorded-carrier-reference.md) for compatibility and recording limits.
+## Page reference
 
-Preview page comparison accounts for
-privacy-omitted choices on trained human-only fields, preserving saved drafts and field safeguards.
-Mapping startup diagnostics distinguish
-unavailable selections, changed preview tabs/users and inactive workflows. Each training field card has an
-autosaving **Ignore** switch for optional fields. Use **Pause training & test** to try the current
-page with a demo quote, then **Resume training** to keep editing the same draft. **Continue training
-this mapping** creates an editable copy of a completed version. See [ADR 0020](docs/adr/0020-training-page-previews.md).
+1. Choose **Page reference**, then **Read page data**. Cards and matching page numbers appear.
+2. Select a **M.I.A. Homeowners field** at the bottom of each card. All 144 fields are available
+   offline, including separate Applicant 1 and Applicant 2 fields. Leave unresolved fields unmapped
+   or choose **No matching M.I.A. field**.
+3. Click **Download mapping notes (.txt)** at the bottom of the panel. The file goes through Chrome's
+   normal download flow into your configured Downloads folder (or its save-location prompt).
+4. Reveal another section or question and read again. Unchanged controls keep their selections;
+   replaced controls start unmapped. Download before navigating or closing the panel.
 
-Saved drafts and completed mappings can be found from
-a reopened carrier tab using fresh M.I.A. training authorization. Original capabilities and jobs stay
-bound to their original tab; recovery preserves numbered choices in a new training session. Saved
-overlays resolve current DOM targets instead of reusing stale identifiers. See
-[ADR 0019](docs/adr/0019-saved-training-recovery.md).
+The panel lists labels, control types, required/optional status, hidden/disabled/read-only state,
+structural names or IDs, and available dropdown/radio choices. It recognizes native fields, common
+ARIA widgets, open shadow roots and accessible same-origin frames. It reads fields throughout the
+loaded document, including fields below the viewport.
 
-Training captures use one shared operational-field
-classification rule at both ends of the API. Unfamiliar labels remain trainable without gaining
-permission for fixed values or carrier defaults. Capture errors identify the actual rejection reason
-instead of treating every HTTP 409 as a stale draft. The toolbar still opens the panel directly from
-the click; opening it does not require a running backend or M.I.A. deployment.
+The reference reader does not enter values, check answers, click buttons, open dropdowns or submit forms. It
+does not collect current input values or upload data. Results stay in panel memory until you choose
+to download. The text file includes displayed page descriptions, name/ID hints, available choices,
+selected M.I.A. source paths and unmapped entries; it contains no entered answers. Page-provided
+descriptions may contain personal text. The file covers the current capture only. Numbers follow
+visible controls on scroll; hidden controls have cards but no visible markers. Markers are replaced
+on reread and removed on page reload.
+The installed extension requests `activeTab`, `scripting`, `sidePanel` and `storage`. Its only
+permanent host permission is the M.I.A. origin; carrier access uses the toolbar's temporary grant.
+M.I.A. tokens stay in trusted session storage and source quotes stay in panel memory. Page reference
+still works without signing in. Chrome-protected pages cannot be read.
 
-## How it works
+Conditional fields that are not in the document, closed components, and protected embedded frames
+may be unavailable. Custom dropdown choices must already exist in accessible page content. Reveal
+them yourself and read again. Present but hidden controls are marked **Hidden**. Large-page limits
+and inaccessible frames produce an explicit notice; the result is not a guarantee of complete site
+coverage. See [ADR 0023](docs/adr/0023-local-page-reader.md) and
+[ADR 0024](docs/adr/0024-local-mapping-notes.md). The bundled M.I.A. catalog is a snapshot of the local
+Home form; later form changes need a refreshed snapshot and extension build.
 
-The side panel has **Map** and **Train** modes.
+## Development and checks
 
-In **Train**, a principal on the separate training allowlist:
-
-1. opens a carrier workflow and chooses Home or Auto; SmartMapper binds the registry identity to the
-   tenant, active carrier origin, and line of business, uses the origin as the base URL, and generates
-   the display label `Home workflow` or `Auto workflow`;
-2. captures the current rendered page;
-3. matches the large numbered overlays on the carrier page to the identically numbered panel rows;
-4. gives every carrier field an explicit disposition: map from M.I.A., keep the carrier default,
-   use an approved fixed operational value, require human entry, ignore, or leave blank;
-5. manually visits subsequent pages and conditional scenarios and captures each one; and
-6. publishes an immutable `testable` version, proves it with a representative mapping job, marks it
-   `verified`, then activates it.
-
-The M.I.A. selector shows the original question, section, entity, and stable source path. The Home
-catalog includes both supported applicants. The Auto catalog includes every supported source field
-for up to five additional drivers and eight vehicles, with wildcard templates for same-position
-rules. Matching uses SHA-256 digests of carrier semantics and optional DOM identity hints. A closed
-vocabulary of static form captions and choices provides readable reference labels; unrecognized or
-potentially personal text stays hashed. Training never stores quote answers, HTML, or screenshots.
-
-In **Map**, SmartMapper retrieves the selected quote's semantic question-and-answer manifest,
-resolves the active mapping for the tenant, carrier origin, and line of business, and compiles
-allowlisted browser actions. Each entry retains source provenance and must pass normalized browser
-read-back. A missing answer, missing mapping, changed control, or failed entry becomes a focused
-review item. Successful independent fields remain complete and are never discarded because another
-field failed.
-
-After field execution, SmartMapper takes a fresh page observation. Only then, after a clean
-whole-page review, may it use a trained ordinary Next/Continue control when automatic navigation is
-enabled. Final Submit, Bind, Issue, Sell, payment, authentication, consent, attestation, signatures,
-CAPTCHA, and MFA remain human actions.
-
-The side panel opens only for the carrier tab on which the toolbar icon was activated. Jobs and
-training capabilities remain bound to that tab and origin. **Train → Find saved training and mappings**
-recovers durable drafts or opens a published version for testing on a newly authorized tab.
-
-## Components
-
-- `apps/extension-prototype`: unpacked MV3 extension with Map/Train modes, page overlays, M.I.A.
-  sign-in, quote search, deterministic execution, read-back, and review UX.
-- `apps/orchestrator-api`: authenticated mapping jobs, training drafts, mapping lifecycle, Azure
-  Table persistence, and redacted telemetry.
-- `packages/contracts`: strict source, registry, training, action, receipt, and job schemas.
-- `packages/automation-core`: shared policy, registry matching, transformations, provenance,
-  browser observation, execution, and read-back.
-- `packages/mia-client`: verifier-bound quote and training-grant redemption plus semantic source
-  access.
-- `apps/mock-carriers`, `apps/automation-worker`, and `packages/carrier-adapters`: synthetic lab and
-  retained v1 regression harness.
-
-## Build and validate
-
-Use Node 24 and the pinned pnpm version. This checkout also has local tools under `.tools`:
+Use Node 24 and pnpm 11. Build with `pnpm build`; the ready-to-load extension is written to
+`apps/extension-prototype/dist`. Defaults use the approved M.I.A. demo and fixed carrier origins.
+Tests build isolated extensions for exact localhost origins. No SmartMapper backend is needed.
 
 ```powershell
-$env:PATH = "$PWD\.tools\node-v24.19.0-win-x64;$env:PATH"
-$env:COREPACK_HOME = "$PWD\.tools\corepack"
-$env:PLAYWRIGHT_BROWSERS_PATH = "$PWD\.tools\playwright"
-pnpm install --frozen-lockfile
 pnpm format:check
 pnpm lint
 pnpm typecheck
@@ -123,27 +74,16 @@ pnpm build
 pnpm test:e2e
 ```
 
-Browser tests use synthetic profiles, M.I.A. manifests, and carrier pages. The registry lifecycle E2E
-uses the real training, registry, mapping, and content-executor boundaries to publish, prove, verify,
-activate, reuse, and exercise failure-safe continuation. These tests do not need an Azure model, real
-M.I.A. account, or carrier account. If Windows hangs while stopping the mock server, run
-`pnpm dev:mock-carriers` in another terminal before `pnpm test:e2e`.
+Browser tests use localhost synthetic pages and an authenticated mock M.I.A. API. The demo test
+covers sign-in, Home quote selection, mapping through a postback, changed/disabled options, read-back
+and no consent/final actions. The page-reader tests exercise the installed build,
+field and choice recognition, repeat reads, empty pages, frames, shadow roots, size limits, numbered
+markers, source selection, selection retention and actual text downloads. They check absence of
+entered values and assert that no carrier input or final-submit action occurs. The earlier
+registry/executor remains in this repository for synthetic regression coverage; its UI tests build
+with `vite.registry-test.config.ts` into ignored `.tools` directories. Those bundles are not part of
+the installed reader. On Windows, the existing generated `artifacts` directory can trip typed lint;
+`pnpm lint --ignore-pattern 'artifacts/**'` checks the project code without those local artifacts.
 
-The retained synthetic worker demo uses `pnpm dev:mock-carriers` followed by
-`pnpm dev:worker -- --flow=modern`. The old v1 local API is available through
-`pnpm --filter @smartmapper/orchestrator-api dev:legacy`; it is never the Azure startup entry point.
-
-See [setup and deployment](docs/SMARTMAPPER_V2_SETUP.md),
-[architecture](docs/ARCHITECTURE.md), [data contracts](docs/DATA_CONTRACT.md), and
-[test strategy](docs/TEST_STRATEGY.md).
-
-## Current limits
-
-Home and Auto are the initial trained lines of business. A carrier workflow works only after a
-verified registry version is active for its exact scope. Carrier redesigns, new options, and unseen
-conditional branches require another training version. Closed shadow roots, inaccessible frames,
-and unsupported custom widgets remain human exceptions. Training cannot create arbitrary scripts or
-infer customer or underwriting facts that M.I.A. did not collect.
-
-Local and synthetic tests do not establish acceptance on a live carrier. Carrier authorization,
-designated test access, and supervised acceptance testing remain separate deployment requirements.
+MIA_web_app/main and the live MIA-Chrome-Extension repository are unchanged. The former cloud
+workflow is documented in the [historical registry setup](docs/SMARTMAPPER_V2_SETUP.md).

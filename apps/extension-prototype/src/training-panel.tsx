@@ -10,6 +10,7 @@ import {
   type TrainingPage,
 } from '@smartmapper/contracts';
 import { catalogFieldLabel, groupCatalogFields } from './mia-catalog.js';
+import { downloadFieldInventory } from './field-inventory.js';
 import {
   TrainingController,
   trainingSession,
@@ -1235,6 +1236,32 @@ export function TrainingPanel({
                   : `${session.training.status === 'draft' ? 'Draft' : 'Training session'} saved · revision ${session.training.revision}`}
             </p>
             <p>{message}</p>
+            <button
+              disabled={
+                working || saving || dirty || !!session.recording || !session.training.pages.length
+              }
+              onClick={() => {
+                setError('');
+                try {
+                  downloadFieldInventory(session.training, session.catalog);
+                  setMessage(
+                    'Field inventory download requested. Share the JSON file to review the numbered fields together.',
+                  );
+                } catch (failure) {
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : 'Could not export the field inventory.',
+                  );
+                }
+              }}
+            >
+              Export field inventory
+            </button>
+            <p className="field-help">
+              Downloads captured field numbers, permitted labels and choices, and M.I.A. questions.
+              Client answers are excluded. Stop recording and let edits save before exporting.
+            </p>
             {session.training.status === 'draft' && !studio && (
               <div className="recording-toolbar">
                 {session.recording ? (

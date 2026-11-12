@@ -1,6 +1,16 @@
 # M.I.A. SmartMapper — Project Scope and Working Charter
 
-## Current POC baseline — October 6, 2026
+## Current POC baseline — November 12, 2026
+
+ADR 0025 implements Dom's fixed Home demo from his completed mapping worksheet: M.I.A. sign-in,
+client/quote selection and deterministic native filling through the shared core. The existing
+extension quote API supplies source data; no stale SmartMapper catalog or registry service is used.
+ADRs 0023/0024's numbered page reader and local mapping-note export remain under **Page reference**.
+Source-free defaults and ambiguous options stay for review; final actions remain manual.
+The older registry remains synthetic regression coverage. MIA_web_app/main and the live extension
+stay read-only. No server/catalog deployment is needed. See README.md for loading and testing.
+
+## Historical POC baseline — October 6, 2026
 
 ADR 0018 supersedes the Astra/PDF runtime described in the September 30 and October 1 history below.
 The active POC is a human-trained deterministic mapping registry for Home and Auto. An authorized

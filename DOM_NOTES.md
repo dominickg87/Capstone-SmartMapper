@@ -1,5 +1,65 @@
 # Current decisions — September 30, 2026
 
+- November 12, extension 0.3.15: Dom supplied the 198-control worksheet and requested logical option
+  wiring for testing. ADR 0025 adds 52 source-backed field recipes, preserving his eleven explicit
+  links. Unsupported facts/options stay for review; no underwriting defaults are inferred. The POC
+  restores M.I.A. sign-in and client/quote selection using the regular extension API, independently
+  of the stale SmartMapper catalog. The shared executor handles entry, provenance, postbacks and
+  read-back. MIA_web_app/main and the live extension were not modified. No live carrier was accessed.
+  Validation: formatting, strict type checking, all builds, 271 unit tests and 13 localhost browser
+  tests passed. The demo test covers the real auth handoff, quote selection, a native postback,
+  exact dropdown entries and a disabled-option retry while leaving consent/final actions untouched.
+  Lint passed with the existing generated-artifact exclusion. Reload 0.3.15 for Dom's live test.
+
+- November 12, extension 0.3.14: Dom added matching field numbers on the page, a Homeowners source
+  dropdown on each card, and a local `.txt` mapping worksheet download. ADR 0024 records the scope.
+  The offline snapshot contains 144 unique source fields from all 120 Home form definitions,
+  including both applicants. MIA_web_app/main remains read-only. Quote selection and demo filling
+  will be designed later from Dom's completed notes. No live carrier was accessed by the agent.
+  Validation: all builds, formatting, strict type checking, 238 unit tests and 12 localhost browser
+  tests passed, including marker alignment, source selection retention and an actual text download.
+  Lint passes with the same existing generated artifacts exclusion. Reload extension 0.3.14.
+
+- November 12, extension 0.3.13: Dom explicitly reset the installed POC to one **Read page data**
+  button with a list of locally discovered fields and choices. M.I.A. sign-in, training, registry,
+  backend requests, auth content scripts and permanent host permissions leave the installed build.
+  ADR 0023 records this approved scope change. The old registry is retained only for synthetic tests.
+  The M.I.A. catalog deployment task is superseded; MIA_web_app/main remains unchanged.
+  Validation: formatting, strict type checking, all builds, 233 unit tests and 11 localhost browser
+  tests passed. Browser coverage verifies the installed one-button reader, field/choice discovery,
+  repeated reads, frames and shadow roots, with no input changes or final submit. Lint passes with
+  the existing generated `artifacts` directory excluded as described below. Reload extension 0.3.13.
+
+- November 12, extension 0.3.12: Dom reported a generic training rejection after connecting to
+  `demo.mia.agency`. The local M.I.A. Home form fingerprint differs from its saved catalog.
+  Regenerating against the current checkout preserves all 120 Home and 64 Auto question definitions;
+  only the Home source digest and source-line metadata change. Dom confirmed the authenticated demo
+  response as `mia_catalog_refresh_required` at the Home catalog step. The extension identifies the
+  exact legacy stale-catalog response and shows
+  a safe request-step label on HTTP 409 errors. Backend health confirms 0.3.9. The candidate catalog
+  is prepared locally; it has not been applied to M.I.A. or deployed. Existing privacy and catalog
+  validation remain enforced.
+  Build, formatting, strict type checking, 227 unit tests and nine localhost browser tests passed.
+  The browser test rejects a stale M.I.A. catalog before capture, then recovers after the fixture is
+  refreshed and retains the final-submit stop. Lint passes excluding the same pre-existing ignored
+  `artifacts` directory described below. Reload extension 0.3.12 to identify the live HTTP 409 step.
+  The prepared catalog-only patch in `.tools/catalog-refresh-20261112/questions.patch` applies
+  cleanly to the current M.I.A. checkout. Dom confirmed that `main` feeds the demo site and explicitly
+  instructed that it remain read-only. The M.I.A. checkout remains clean; the repair is held outside
+  that repository. The deployment route still needs confirmation. The simultaneous red sign-in error comes from the
+  separate regular M.I.A. extension; SmartMapper's success text follows its own verified handoff.
+
+- November 12, extension 0.3.11: Dom requested a captured carrier field inventory to review each
+  mapping together for a single-site Home demo. Train and the field reference now export a JSON
+  worksheet with existing field numbers, allowlisted captions/choices and the value-free M.I.A.
+  catalog. The export omits account/session identity, answers, raw page code and fixed-value payloads;
+  unknown labels remain numbered fallbacks. It does not import, publish or activate mappings.
+  Backend 0.3.9 is unchanged; no agent accessed a live carrier. See the setup guide's export section.
+  Validation: 225 unit tests and nine localhost browser tests passed, including a real JSON download
+  and the final-submit stop assertion. Build, formatting and strict type checking passed. Plain lint
+  encounters the pre-existing ignored `artifacts/catalog-refresh-20261029/generate-catalog.mjs`;
+  lint passes with `--ignore-pattern 'artifacts/**'`. Reload the rebuilt extension in Chrome.
+
 - October 7, build 0.3.3: Closing a carrier tab stranded the saved training view because overlay
   restoration threw before displaying metadata. Restoration now preserves the saved view; the
   trainer can find durable drafts or published mappings using a fresh, same-scope M.I.A. training

@@ -6,3 +6,4 @@ export * from './page.js';
 export * from './smartmapper.js';
 export * from './diagnostics.js';
 export * from './registry.js';
+export * from './page-reader.js';

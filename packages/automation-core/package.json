@@ -9,6 +9,10 @@
     "!dist/.tsbuildinfo"
   ],
   "exports": {
+    "./page-reader": {
+      "types": "./dist/page-reader.d.ts",
+      "default": "./dist/page-reader.js"
+    },
     "./active-tab": {
       "types": "./dist/active-tab.d.ts",
       "default": "./dist/active-tab.js"

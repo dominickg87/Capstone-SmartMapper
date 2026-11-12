@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Synthetic field reader</title>
+  </head>
+  <body data-input-events="0" data-click-events="0">
+    <form id="first">
+      <label
+        >Applicant name <input name="applicantName" required value="SYNTHETIC-SECRET-ANSWER"
+      /></label>
+      <label for="roof">Roof material</label>
+      <select id="roof" name="roof">
+        <option>Choose a roof</option>
+        <option>Metal</option>
+        <optgroup label="Other" disabled><option>Tile</option></optgroup>
+      </select>
+      <fieldset>
+        <legend>Currently insured?</legend>
+        <label><input type="radio" name="insured" value="yes" checked />Yes</label
+        ><label><input type="radio" name="insured" value="no" />No</label>
+      </fieldset>
+      <label><input type="checkbox" name="pool" />Has a pool</label>
+      <label>Additional notes<textarea>SYNTHETIC-NOTE-ANSWER</textarea></label>
+      <label>Private password<input type="password" value="SYNTHETIC-PASSWORD" /></label>
+      <input type="hidden" name="sessionSecret" value="SYNTHETIC-HIDDEN-TOKEN" />
+      <div hidden>
+        <label>Hidden detail<input name="hiddenDetail" /></label>
+      </div>
+      <label>Read only identifier<input name="readonlyField" readonly /></label>
+      <fieldset disabled>
+        <label>Disabled question<input name="disabledField" /></label>
+      </fieldset>
+      <label
+        >Features<select multiple>
+          <option>Alarm</option>
+          <option>Sprinklers</option>
+        </select></label
+      >
+      <label>City suggestions<input list="cities" /></label
+      ><datalist id="cities">
+        <option>Demo City</option>
+        <option>Sample Town</option>
+      </datalist>
+      <div role="radiogroup" aria-label="Occupancy">
+        <span role="radio" aria-checked="true">Owner</span
+        ><span role="radio" aria-checked="false">Tenant</span>
+      </div>
+      <div
+        role="combobox"
+        aria-label="Construction"
+        aria-controls="construction-options"
+        tabindex="0"
+      ></div>
+      <div id="construction-options" role="listbox">
+        <div role="option">Frame</div>
+        <div role="option" aria-disabled="true">Masonry</div>
+      </div>
+      <div
+        role="combobox"
+        aria-label="Unopened choices"
+        aria-controls="not-rendered"
+        tabindex="0"
+      ></div>
+      <div contenteditable="true" aria-label="Editable notes">SYNTHETIC-EDITABLE-ANSWER</div>
+      <reader-fields></reader-fields>
+      <button id="mock-final-submit" type="submit" data-clicked="false">Submit quote</button>
+    </form>
+    <form>
+      <fieldset>
+        <legend>Second applicant insured?</legend>
+        <label><input type="radio" name="insured" />Yes</label
+        ><label><input type="radio" name="insured" />No</label>
+      </fieldset>
+    </form>
+    <iframe title="Accessible synthetic frame" src="/reader-frame"></iframe>
+    <iframe
+      title="Protected synthetic frame"
+      sandbox=""
+      srcdoc="<label>Protected field<input></label>"
+    ></iframe>
+    <script>
+      document.querySelector('reader-fields').attachShadow({ mode: 'open' }).innerHTML =
+        '<label>Shadow question<input name="shadowQuestion"></label>';
+      document.addEventListener('input', () => {
+        document.body.dataset.inputEvents = String(Number(document.body.dataset.inputEvents) + 1);
+      });
+      document.addEventListener('click', () => {
+        document.body.dataset.clickEvents = String(Number(document.body.dataset.clickEvents) + 1);
+      });
+      document.getElementById('mock-final-submit').addEventListener('click', (event) => {
+        event.preventDefault();
+        event.currentTarget.dataset.clicked = 'true';
+      });
+    </script>
+  </body>
+</html>

@@ -330,7 +330,7 @@ export class BrowserPageSession {
       const options =
         element instanceof HTMLSelectElement
           ? Array.from(element.options)
-              .filter((option) => !option.disabled)
+              .filter((option) => !option.disabled && !option.closest('optgroup[disabled]'))
               .map((option) => ({ value: option.value, label: clean(option.label) }))
           : [];
       const rect = element.getBoundingClientRect();

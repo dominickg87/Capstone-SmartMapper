@@ -1,8 +1,29 @@
 # Architecture
 
-## Active-tab v2 current implementation
+## Current installed POC: fixed Home demo and local reference
 
-[ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md) is the active POC baseline.
+[ADR 0025](adr/0025-home-demo-crosswalk.md) adds the fixed profile from Dom's worksheet. The POC
+uses M.I.A.'s regular authenticated extension API for Home quote search/detail, then compiles
+source-backed fill/select actions in `carrier-adapters/home-demo.ts`. The existing shared
+`BrowserPageSession` performs policy checks, entry and read-back. The open panel owns the bounded
+run across same-URL native postbacks; the service worker owns only the verified sign-in handoff.
+The only permanent host permission is M.I.A.; carrier access remains active-tab. No registry or
+SmartMapper catalog service is required. MIA_web_app/main and the live extension remain read-only.
+
+## Retained page-reference tools
+
+[ADR 0023](adr/0023-local-page-reader.md), extended by [ADR 0024](adr/0024-local-mapping-notes.md),
+define the local reference workflow. A toolbar background opens the side panel. One user click runs
+the shared core's `readPageFields` function in
+Chrome's isolated world under the temporary active-tab grant. A strict local result schema feeds
+the numbered panel list and non-interactive page markers. The panel bundles 144 Homeowners source
+fields and projects user-selected correspondences into a local text download. This reference flow
+does not use authentication, storage, registry, API, source answer resolution or execution.
+Reference results stay in panel memory until explicitly downloaded; navigation clears them.
+
+## Retained active-tab v2 registry implementation
+
+[ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md) defines the retained registry.
 SmartMapper uses a human-trained, versioned mapping registry and deterministic browser execution.
 The active runtime makes no Astra, PDF, prompt, chat, suggestion, or model-verification call.
 

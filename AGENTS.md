@@ -10,9 +10,13 @@ into an assumption.
 
 ## Architectural invariants
 
-ADR 0018 is the current POC baseline. Implement active-tab v2 in this repository and the approved
-MIA web app branch. Do not edit the live MIA-Chrome-Extension repository. The v1 remote worker is a
-synthetic regression harness, not a current cloud-runtime deliverable. The active runtime uses a
+ADR 0025 is the current installed POC baseline: a fixed Home demo profile, M.I.A. quote selection,
+deterministic execution through the shared core, and the retained ADR 0023/0024 page-reference tools.
+Use the existing M.I.A. extension API; the stale SmartMapper catalog/registry service is not required.
+ADR 0018's registry and active-tab v2 remain synthetic
+regression code. Dom requires MIA_web_app/main to remain read-only. Do not edit the live
+MIA-Chrome-Extension repository. The v1 remote worker is a
+synthetic regression harness, not a current cloud-runtime deliverable. The retained regression runtime uses a
 human-trained, versioned mapping registry with deterministic execution. Astra, PDF interpretation,
 mapping chat, prompts, suggestions and model verification are retired from SmartMapper.
 

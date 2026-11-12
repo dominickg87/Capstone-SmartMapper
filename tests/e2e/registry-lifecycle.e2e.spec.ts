@@ -145,11 +145,23 @@ test.beforeAll(() => {
     VITE_SMARTMAPPER_CARRIER_ORIGINS: carrierOrigin,
     VITE_SMARTMAPPER_ALLOW_ANY_CARRIER: 'false',
   };
-  execFileSync(process.execPath, [vite, 'build', '--outDir', extensionPath, '--emptyOutDir'], {
-    cwd,
-    env,
-    stdio: 'pipe',
-  });
+  execFileSync(
+    process.execPath,
+    [
+      vite,
+      'build',
+      '--config',
+      'vite.registry-test.config.ts',
+      '--outDir',
+      extensionPath,
+      '--emptyOutDir',
+    ],
+    {
+      cwd,
+      env,
+      stdio: 'pipe',
+    },
+  );
   execFileSync(
     process.execPath,
     [vite, 'build', '--config', 'vite.content.config.ts', '--outDir', extensionPath],

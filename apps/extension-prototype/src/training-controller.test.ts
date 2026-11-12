@@ -20,6 +20,52 @@ vi.mock('./session.js', () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 describe('training API errors', () => {
+  it('identifies the legacy M.I.A. stale-catalog response without suggesting a panel retry', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              message: 'SmartMapper question catalog needs regeneration.',
+            }),
+            { status: 409 },
+          ),
+        ),
+      ),
+    );
+    await expect(new TrainingController().catalog('home')).rejects.toThrow(
+      /mia_catalog_refresh_required/,
+    );
+    await expect(new TrainingController().catalog('home')).rejects.toThrow(
+      /M.I.A. Home catalog; HTTP 409/,
+    );
+    await expect(new TrainingController().catalog('home')).rejects.toThrow(
+      /Reopening this panel will not fix it/,
+    );
+  });
+
+  it('identifies the failed catalog step without displaying arbitrary server data', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: 'synthetic-private-error',
+              message: 'synthetic-private-message',
+            }),
+            { status: 409 },
+          ),
+        ),
+      ),
+    );
+    await expect(new TrainingController().catalog('auto')).rejects.toThrow(
+      /M.I.A. Auto catalog; HTTP 409/,
+    );
+    await expect(new TrainingController().catalog('auto')).rejects.not.toThrow(/synthetic-private/);
+  });
+
   it.each([
     ['revision_conflict', /draft changed/],
     ['training_conflict', /draft changed/],

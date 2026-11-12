@@ -1,0 +1,178 @@
+.demo {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at top right, #ead7fa, transparent 65%),
+    linear-gradient(140deg, #eef0ff, #f9faff);
+  color: #00026a;
+}
+.demo-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 20px 16px 14px;
+}
+.demo-brand {
+  display: grid;
+  place-items: center;
+  background: #00026a;
+  color: white;
+  border-radius: 14px;
+  font-size: 17px;
+  font-weight: 750;
+  width: 58px;
+  height: 58px;
+}
+.demo-header h1 {
+  margin: 0;
+  font-size: 21px;
+}
+.demo-header p {
+  font-size: 12px;
+  margin: 5px 0;
+  color: #6b6f84;
+}
+.demo nav {
+  display: flex;
+  gap: 6px;
+  padding: 0 16px 8px;
+}
+.demo nav button {
+  background: #ffffff88;
+  color: #00026a;
+  padding: 10px 8px;
+  font-size: 12px;
+  border: 1px solid #d9dcef;
+}
+.demo nav button.selected {
+  background: #00026a;
+  color: white;
+}
+.demo main {
+  padding: 12px 16px 24px;
+}
+.demo-card {
+  background: #ffffffd9;
+  border: 1px solid #ffffff;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-shadow: 0 5px 20px #00026a0a;
+}
+.demo-card h2 {
+  font-size: 15px;
+  margin: 0 0 12px;
+}
+.demo-card p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.demo-card-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.demo-card-title span {
+  font-size: 11px;
+}
+.connected {
+  color: #146c46;
+}
+.disconnected {
+  color: #6b6f84;
+}
+.demo label {
+  display: block;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.demo input {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d5d9ed;
+  border-radius: 8px;
+  font: inherit;
+  background: white;
+}
+.demo input:focus {
+  outline: 2px solid #098cd6;
+}
+.demo button {
+  background: #00026a;
+}
+.demo button:hover {
+  background: #141784;
+}
+.demo button.secondary {
+  background: #f2f4ff;
+  color: #00026a;
+  border: 1px solid #d8dbed;
+  padding: 10px;
+}
+.demo button.stop {
+  margin-top: 8px;
+}
+.quote-results {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+.demo button.quote {
+  text-align: left;
+  background: #f8f9ff;
+  border: 1px solid #e1e4f1;
+  color: #00026a;
+  padding: 11px;
+}
+.demo button.quote.selected {
+  border-color: #098cd6;
+  background: #edf7ff;
+}
+.quote strong,
+.quote span {
+  display: block;
+}
+.quote span {
+  font-size: 11px;
+  font-weight: 400;
+  margin-top: 5px;
+  color: #6b6f84;
+}
+.demo-hint {
+  font-size: 11px !important;
+  color: #6b6f84;
+}
+.demo-message {
+  background: white;
+  border-radius: 9px;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.demo-results {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.demo-results li {
+  border-left: 3px solid #d69b28;
+  padding: 7px 10px;
+  background: #fff9eb;
+}
+.demo-results li.verified {
+  border-color: #2b9568;
+  background: #f1faf5;
+}
+.demo-results strong,
+.demo-results span {
+  display: block;
+  font-size: 12px;
+}
+.demo-results span {
+  font-size: 11px;
+  color: #5d6478;
+  margin-top: 4px;
+  line-height: 1.5;
+}

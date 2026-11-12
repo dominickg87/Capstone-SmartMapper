@@ -1,8 +1,33 @@
 # Test strategy
 
-## Active deterministic-registry checks
+## Fixed Home demo checks
 
-[ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md) is the active test baseline.
+[ADR 0025](adr/0025-home-demo-crosswalk.md) requires exact option/code matching, coverage ratios,
+all worksheet dispositions, source provenance and negative cases for unsupported facts, changed
+identities/types, disabled/duplicated options and protected controls. Auth tests check nonce, tab,
+origin, frame, expiry, replay and profile verification. `home-demo.e2e.spec.ts` builds an isolated
+localhost extension, signs into a synthetic API, selects a Home quote, fills through a native
+postback and reruns against a disabled option. Consent and final controls must remain untouched.
+Build the delivered extension before running the full reader/registry regression suite.
+
+## Installed page-reader checks
+
+[ADRs 0023](adr/0023-local-page-reader.md) and [0024](adr/0024-local-mapping-notes.md) define the
+installed extension. Build it before browser tests. `page-reader.e2e.spec.ts` loads that exact build
+and checks the Page reference view's read/download controls, M.I.A.-only host permissions,
+no external service requests from the reference flow, native/custom control recognition, grouped radio choices,
+dynamic recapture, empty pages, frames, shadow roots and explicit size limits. It checks matching
+page markers, scroll/layout updates, hidden controls, key retention and replacement, 144 Homeowners
+choices, unchanged source selections on reread, and an actual text download. Input values remain
+unchanged and absent from results; input/click counters and the final-submit sentinel remain zero.
+Client tests reject stale/wrong tabs, restricted URLs, missing permission and invalid results.
+Mapping-note unit tests cover catalog completeness, unmatched/unmapped fields, schema projection,
+incomplete captures and exclusion of URL secrets and entered answers.
+
+## Retained deterministic-registry checks
+
+[ADR 0018](adr/0018-human-trained-deterministic-mapping-registry.md) is the retained registry baseline.
+Its extension UI tests explicitly use `vite.registry-test.config.ts`; this is not the installed build.
 Build before testing so injected workspace packages, the backend, and the unpacked extension use the
 same contracts and application versions. Model, PDF, prompt, chat, and citation-verification tests are
 historical evidence; they do not establish correctness for build 0.3.0.

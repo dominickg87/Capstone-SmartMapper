@@ -1,6 +1,6 @@
 {
   "name": "@smartmapper/extension-prototype",
-  "version": "0.3.10",
+  "version": "0.3.15",
   "private": true,
   "type": "module",
   "scripts": {
