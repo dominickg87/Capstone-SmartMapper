@@ -181,6 +181,10 @@ test('connects, selects a Home quote, maps through a postback and leaves consent
     });
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const extensionId = new URL(worker.url()).hostname;
+    // Chrome drops a toolbar action that arrives before the worker registers its listener.
+    await expect
+      .poll(() => worker.evaluate(() => chrome.action.onClicked.hasListeners()))
+      .toBe(true);
     const page = await context.newPage();
     await page.goto(carrierOrigin + '/Quote/Quote.aspx');
     const cdp = await context.browser()!.newBrowserCDPSession();

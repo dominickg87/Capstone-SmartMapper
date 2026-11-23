@@ -52,6 +52,10 @@ test('the installed reader numbers controls and downloads Home mapping notes wit
     });
     const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker'));
     const extensionId = new URL(worker.url()).hostname;
+    // Chrome drops a toolbar action that arrives before the worker registers its listener.
+    await expect
+      .poll(() => worker.evaluate(() => chrome.action.onClicked.hasListeners()))
+      .toBe(true);
     const page = await context.newPage();
     await page.goto(origin + '/reader');
     await expect(page.frameLocator('iframe').first().getByLabel('Frame question')).toBeVisible();

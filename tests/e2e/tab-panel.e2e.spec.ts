@@ -641,6 +641,9 @@ test('pauses partial training, fills with review overlays, resumes edits and tes
       (await saved()).training.pages[0]!.fields.find(
         (field) => field.fieldId === optionalField.fieldId,
       )!.disposition;
+    // Storage can hold the captured page before the panel has rendered its field cards.
+    for (const field of [firstField, humanField, optionalField])
+      await expect.poll(() => switchState(field.fieldId)).not.toBe('');
     // Ignore works on a collapsed card, saves durably, and cannot bypass protected fields.
     expect(await toggleIgnore(firstField.fieldId)).toBe('disabled');
     expect(await toggleIgnore(humanField.fieldId)).toBe('disabled');
